@@ -21,3 +21,5 @@ app/.kotlin/
 *.iml
 
 secrets-for-github/
+
+.claude/
