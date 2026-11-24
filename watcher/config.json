@@ -1,0 +1,12 @@
+{
+  "movieSlug": "avengers-doomsday",
+  "movieId": "MV176735",
+  "city": "chennai",
+  "fcmTopic": "doomsday-chennai",
+  "ntfyTopic": "dd-e948abf75da1",
+  "ntfyServer": "https://ntfy.sh",
+  "pollSeconds": 60,
+  "theatreKeywords": [],
+  "formatKeywords": [],
+  "languages": []
+}

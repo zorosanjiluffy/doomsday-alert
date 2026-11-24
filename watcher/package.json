@@ -1,0 +1,18 @@
+{
+  "name": "doomsday-watcher",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Watches District for new Avengers: Doomsday shows and pushes alarms to the Doomsday app",
+  "main": "watcher.js",
+  "scripts": {
+    "start": "node watcher.js",
+    "once": "node watcher.js --once",
+    "test-alarm": "node watcher.js --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.10.0"
+  }
+}

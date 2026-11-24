@@ -1,0 +1,21 @@
+# secrets: never commit
+**/google-services.json
+**/*service-account*.json
+**/*.jks
+**/keystore.password
+.env
+
+# watcher runtime
+watcher/node_modules/
+watcher/state.json
+watcher/state.json.tmp
+watcher/watcher.log
+
+# android build
+app/.gradle/
+app/build/
+app/app/build/
+app/local.properties
+app/.idea/
+app/.kotlin/
+*.iml

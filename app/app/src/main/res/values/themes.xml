@@ -1,0 +1,9 @@
+<resources>
+    <style name="Theme.Doom" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/doom_black</item>
+        <item name="android:statusBarColor">@color/doom_black</item>
+        <item name="android:navigationBarColor">@color/doom_black</item>
+    </style>
+    <color name="doom_black">#07090A</color>
+    <color name="doom_green">#1D9E75</color>
+</resources>
