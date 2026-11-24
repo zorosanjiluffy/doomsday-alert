@@ -186,7 +186,13 @@ function getFcm() {
   if (!raw) return (fcm = false);
   try {
     const admin = require('firebase-admin');
-    const creds = raw.trim().startsWith('{') ? JSON.parse(raw) : JSON.parse(fs.readFileSync(raw, 'utf8'));
+    // Accepts the service-account JSON itself, a path to the file, or the JSON base64-encoded.
+    const v = raw.trim();
+    const creds = v.startsWith('{')
+      ? JSON.parse(v)
+      : fs.existsSync(v)
+        ? JSON.parse(fs.readFileSync(v, 'utf8'))
+        : JSON.parse(Buffer.from(v, 'base64').toString('utf8'));
     admin.initializeApp({ credential: admin.credential.cert(creds) });
     fcm = admin.messaging();
     log(`FCM ready (project ${creds.project_id}, topic "${config.fcmTopic}")`);
