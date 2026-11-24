@@ -181,7 +181,8 @@ async function collectAll() {
 let fcm = null;
 function getFcm() {
   if (fcm !== null) return fcm;
-  const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
+  const localKey = path.join(DIR, 'firebase-service-account.json');
+  const raw = process.env.FIREBASE_SERVICE_ACCOUNT || (fs.existsSync(localKey) ? localKey : '');
   if (!raw) return (fcm = false);
   try {
     const admin = require('firebase-admin');
@@ -211,6 +212,21 @@ async function sendFcm({ kind, title, message, click }) {
         sentAt: new Date().toISOString(),
       },
       android: { priority: 'high', ttl: kind === 'alarm' ? 3 * 3600 * 1000 : 6 * 3600 * 1000 },
+      // Web/iPhone home-screen app: the browser shows this notification itself.
+      webpush: {
+        headers: { Urgency: 'high', TTL: String(kind === 'alarm' ? 3 * 3600 : 6 * 3600) },
+        notification: {
+          title,
+          body: message.length > 300 ? message.slice(0, 300) + '…' : message,
+          icon: `${config.webAppUrl}icon-192.png`,
+          badge: `${config.webAppUrl}icon-192.png`,
+          tag: kind === 'alarm' ? 'doomsday-alarm' : 'doomsday-info',
+          renotify: true,
+          requireInteraction: kind === 'alarm',
+          vibrate: [900, 350, 900, 350, 1400],
+        },
+        fcmOptions: { link: click || baseUrl },
+      },
     });
     log(`FCM ${kind}: ${title}`);
   } catch (e) {
@@ -426,6 +442,38 @@ function startServer() {
       if (url.pathname === '/status') {
         res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' });
         return res.end(JSON.stringify(status));
+      }
+      if (url.pathname === '/subscribe-web') {
+        // The iPhone/web app posts its FCM token here; we add it to the alerts topic.
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204);
+          return res.end();
+        }
+        if (req.method !== 'POST') {
+          res.writeHead(405);
+          return res.end();
+        }
+        let body = '';
+        for await (const chunk of req) {
+          body += chunk;
+          if (body.length > 4096) break;
+        }
+        try {
+          const token = JSON.parse(body).token;
+          const m = getFcm();
+          if (typeof token !== 'string' || token.length < 20 || token.length > 1024 || !m) throw new Error('bad request');
+          const r = await m.subscribeToTopic([token], config.fcmTopic);
+          if (r.failureCount) throw new Error(r.errors[0]?.error?.message || 'subscribe failed');
+          status.webSubscribers = (status.webSubscribers || 0) + 1;
+          log('Web app subscribed to alerts');
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end('{"ok":true}');
+        } catch (e) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ ok: false, error: e.message }));
+        }
       }
       if (url.pathname === '/test' && req.method === 'POST') {
         if (!process.env.ADMIN_KEY || url.searchParams.get('key') !== process.env.ADMIN_KEY) {

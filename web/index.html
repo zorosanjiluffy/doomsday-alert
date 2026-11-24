@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Doomsday Alert</title>
+  <meta name="description" content="Get alerted the moment Avengers: Doomsday tickets open in Chennai." />
+  <meta name="theme-color" content="#07090A" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Doomsday" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="icon-180.png" />
+  <link rel="icon" type="image/png" href="icon-192.png" />
+  <style>
+    :root {
+      --black: #07090A; --text: #E1F5EE; --text2: #9FE1CB; --muted: #6f7d78;
+      --green: #1D9E75; --green-bright: #5DCAA5; --green-deep: #0F6E56;
+      --amber: #EF9F27; --amber-deep: #633806;
+      --red: #E24B4A; --red-deep: #1A0606; --red-soft: #F09595; --red-text: #FCEBEB;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: var(--black); color: var(--text); }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      min-height: 100dvh; -webkit-tap-highlight-color: transparent;
+      padding: max(16px, env(safe-area-inset-top)) 16px max(20px, env(safe-area-inset-bottom));
+    }
+    main { max-width: 440px; margin: 0 auto; display: flex; flex-direction: column; align-items: center; }
+    .pill { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; padding: 6px 14px; border-radius: 99px; border: 1px solid var(--amber); color: var(--amber); }
+    .pill .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+    .pill.ok { border-color: var(--green); color: var(--green-bright); }
+    .stage { position: relative; width: 100%; aspect-ratio: 1; margin: 6px 0 2px; }
+    .stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+    .plate { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); text-align: center;
+      background: rgba(7, 9, 10, .88); border: 1px solid var(--green-deep); border-radius: 14px; padding: 8px 14px; }
+    .plate small { display: block; color: var(--green-bright); font-size: 12px; }
+    .plate b { font: 700 clamp(15px, 5vw, 22px) ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; }
+    h1 { font-size: 19px; margin: 6px 0 4px; text-align: center; }
+    .status { color: var(--muted); font-size: 12px; text-align: center; min-height: 16px; line-height: 1.5; }
+    .btn { display: block; width: 100%; text-align: center; text-decoration: none; border: 0; cursor: pointer;
+      font-family: inherit; font-weight: 700; font-size: 16px; padding: 16px; border-radius: 16px; }
+    .primary { background: var(--green); color: var(--black); margin-top: 18px; }
+    .ghost { background: transparent; color: var(--text2); border: 1px solid var(--green-deep); margin-top: 12px; font-weight: 500; font-size: 15px; }
+    .ghost.on { color: var(--green-bright); border-color: var(--green); }
+    .card { width: 100%; margin-top: 18px; border-radius: 14px; padding: 14px 16px; font-size: 14px; line-height: 1.55; }
+    .card h2 { font-size: 15px; margin: 0 0 6px; }
+    .warn { border: 1px solid var(--amber-deep); color: var(--text); }
+    .warn h2 { color: var(--amber); }
+    .card ol { margin: 6px 0 0; padding-left: 20px; }
+    .card a { color: var(--green-bright); }
+    .share { display: inline-block; vertical-align: -3px; width: 16px; height: 18px; }
+    .last { background: #0B1F19; }
+    .last.alarm { background: #2A0B0B; }
+    .last small { color: var(--text2); font-size: 12px; }
+    .last.alarm small { color: var(--red-soft); }
+    .last p { margin: 4px 0 0; color: var(--text2); font-size: 13px; white-space: pre-line; }
+    .err { color: var(--red-soft); font-size: 13px; margin-top: 8px; text-align: center; min-height: 0; }
+    footer { color: var(--muted); font-size: 11px; text-align: center; margin-top: 18px; }
+    [hidden] { display: none !important; }
+
+    /* Full-screen alert (shown if a push arrives while the app is open) */
+    #alert { position: fixed; inset: 0; background: var(--red-deep); color: var(--red-text); z-index: 10;
+      display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 32px 24px; text-align: center; }
+    #alert .rings { position: relative; width: 200px; height: 200px; display: grid; place-items: center; margin-bottom: 24px; }
+    #alert .rings i { position: absolute; width: 90px; height: 90px; border-radius: 50%; border: 3px solid var(--red); animation: ring 1.4s ease-out infinite; }
+    #alert .rings i:nth-child(2) { animation-delay: .47s; } #alert .rings i:nth-child(3) { animation-delay: .94s; }
+    #alert .core { width: 84px; height: 84px; border-radius: 50%; background: var(--red); display: grid; place-items: center; font-size: 40px; }
+    #alert h2 { font-size: 26px; margin: 0 0 12px; }
+    #alert p { color: var(--red-soft); margin: 0 0 28px; white-space: pre-line; line-height: 1.5; }
+    #alert .go { background: var(--red); color: var(--red-text); }
+    #alert .close { background: none; color: var(--red-soft); margin-top: 8px; font-weight: 500; }
+    #alert.buzz > * { animation: shake .26s linear infinite; }
+    @keyframes ring { from { transform: scale(.7); opacity: .9 } to { transform: scale(2.2); opacity: 0 } }
+    @keyframes shake { 0%,100% { transform: translateX(0) } 25% { transform: translateX(-6px) } 75% { transform: translateX(6px) } }
+    @media (prefers-reduced-motion: reduce) { #alert .rings i, #alert.buzz > * { animation: none; } }
+  </style>
+</head>
+<body>
+  <main>
+    <span id="pill" class="pill"><span class="dot"></span><span id="pillText">Loading…</span></span>
+
+    <div class="stage">
+      <canvas id="sigil" aria-hidden="true"></canvas>
+      <div class="plate"><small id="cdLabel">Doom arrives in</small><b id="countdown">--d --h --m --s</b></div>
+    </div>
+
+    <h1>Avengers: Doomsday · Chennai</h1>
+    <div id="status" class="status">Alerts arrive the moment new theatres or dates open</div>
+
+    <div id="install" class="card warn" hidden>
+      <h2>Add this to your Home Screen first</h2>
+      iPhone only sends alerts to apps on your Home Screen:
+      <ol>
+        <li>Tap the <b>Share</b> button
+          <svg class="share" viewBox="0 0 16 20" fill="none" stroke="#5DCAA5" stroke-width="1.6" aria-label="Share icon"><path d="M8 13V1M4 5l4-4 4 4M3 8H1.5v10.5h13V8H13"/></svg>
+          at the bottom of Safari</li>
+        <li>Choose <b>Add to Home Screen</b>, then <b>Add</b></li>
+        <li>Open <b>Doomsday</b> from your Home Screen and tap <b>Turn on alerts</b></li>
+      </ol>
+    </div>
+
+    <div id="android" class="card warn" hidden>
+      <h2>On Android? Get the real alarm</h2>
+      The Android app rings and vibrates until you open it.
+      <a id="apkLink" href="#">Download the Android app</a>
+    </div>
+
+    <div id="last" class="card last" hidden>
+      <small id="lastWhen"></small>
+      <div id="lastTitle" style="font-weight:700;margin-top:4px"></div>
+      <p id="lastBody"></p>
+    </div>
+
+    <a id="open" class="btn primary" href="#" target="_blank" rel="noopener">Open Doomsday on District →</a>
+    <button id="alerts" class="btn ghost" type="button">Turn on alerts</button>
+    <div id="err" class="err"></div>
+
+    <footer>Not affiliated with Marvel or District. Fan-made alert for friends.</footer>
+  </main>
+
+  <div id="alert" hidden role="alertdialog" aria-labelledby="alertTitle">
+    <div class="rings"><i></i><i></i><i></i><div class="core">🎟</div></div>
+    <h2 id="alertTitle">Doomsday tickets just dropped</h2>
+    <p id="alertBody"></p>
+    <a id="alertGo" class="btn go" href="#" target="_blank" rel="noopener">Open in District →</a>
+    <button id="alertClose" class="btn close" type="button">Close</button>
+  </div>
+
+  <script src="config.js"></script>
+  <script src="sigil.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

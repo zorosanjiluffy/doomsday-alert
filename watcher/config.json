@@ -8,5 +8,6 @@
   "pollSeconds": 60,
   "theatreKeywords": [],
   "formatKeywords": [],
-  "languages": []
+  "languages": [],
+  "webAppUrl": "https://zorosanjiluffy.github.io/doomsday-alert/"
 }
