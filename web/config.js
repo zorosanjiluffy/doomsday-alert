@@ -13,7 +13,7 @@ self.DOOM_CONFIG = {
   // Firebase console → Project settings → Cloud Messaging → Web Push certificates → Key pair
   vapidKey: 'BLJWu389nbaDnAbUHlO_tMXgtqFLt_KEbzZN1pbHA-K838S1Q41l6c0pMMn8K8BTLTChOdVZVMMxB_WP5J9zoQM',
   // The hosted watcher (Railway), without a trailing slash, e.g. https://doomsday-watcher.up.railway.app
-  watcherUrl: '',
+  watcherUrl: 'https://doomsday-alert-production.up.railway.app',
   apkUrl: 'https://github.com/zorosanjiluffy/doomsday-alert/releases/latest/download/DoomsdayAlert.apk',
   districtUrl: 'https://www.district.in/movies/avengers-doomsday-movie-tickets-in-chennai-MV176735',
   firstShow: '2026-12-17T06:00:00+05:30',

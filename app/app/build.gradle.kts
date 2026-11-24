@@ -28,7 +28,9 @@ fun readFirebase(): FirebaseCfg {
 }
 
 val fb = readFirebase()
-val statusUrl: String = (project.findProperty("statusUrl") as String?) ?: System.getenv("STATUS_URL") ?: ""
+val statusUrl: String = (project.findProperty("statusUrl") as String?)
+    ?: System.getenv("STATUS_URL")?.takeIf { it.isNotBlank() }
+    ?: "https://doomsday-alert-production.up.railway.app/status"
 
 android {
     namespace = "com.doomsdaywatch.alert"
