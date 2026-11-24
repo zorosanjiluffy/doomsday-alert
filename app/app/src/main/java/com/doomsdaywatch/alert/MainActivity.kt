@@ -85,8 +85,27 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         (application as DoomApp).subscribe()
-        setContent { HomeScreen() }
+        setContent { DoomRoot() }
     }
+}
+
+/** Shows the mandatory setup until every permission is granted, then the home screen. */
+@Composable
+private fun DoomRoot() {
+    val ctx = LocalContext.current
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    var tick by remember { mutableIntStateOf(0) }
+    LaunchedEffect(Unit) {
+        // Re-check every time the person comes back from a system popup or settings page.
+        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            while (true) {
+                tick++
+                delay(1500)
+            }
+        }
+    }
+    val steps = remember(tick) { requiredSteps(ctx) }
+    if (steps.all { it.done }) HomeScreen() else SetupScreen(steps) { tick++ }
 }
 
 @Composable
@@ -98,8 +117,6 @@ private fun HomeScreen() {
     var refresh by remember { mutableIntStateOf(0) } // bumps when we return to the app
     var testCountdown by remember { mutableIntStateOf(0) }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-
-    val notifLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { refresh++ }
 
     LaunchedEffect(Unit) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
@@ -124,8 +141,6 @@ private fun HomeScreen() {
     val msLeft = RELEASE.toEpochMilli() - now
     val daysLeft = msLeft / 86_400_000f
     val speed = 1f + 2f * (1f - (daysLeft / 30f).coerceIn(0f, 1f))
-
-    val checks = remember(refresh) { setupChecks(ctx) }
 
     Column(
         Modifier
@@ -190,28 +205,6 @@ private fun HomeScreen() {
             contentAlignment = Alignment.Center,
         ) {
             Text("Open Doomsday on District  →", color = Black, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-        }
-
-        val todo = checks.filter { !it.done }
-        if (todo.isNotEmpty()) {
-            Spacer(Modifier.height(24.dp))
-            Text(
-                "Finish setup so the alarm can wake you",
-                color = Amber,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(8.dp))
-            todo.forEach { c ->
-                SetupRow(c.label, c.hint) {
-                    if (c.key == "notif" && Build.VERSION.SDK_INT >= 33) {
-                        notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                    } else {
-                        c.fix(ctx)
-                    }
-                }
-            }
         }
 
         Spacer(Modifier.height(20.dp))
@@ -290,55 +283,6 @@ private fun LastAlertCard(a: LastAlert, now: Long) {
             Text(a.body, color = Text2, fontSize = 13.sp, maxLines = 6, lineHeight = 18.sp)
         }
     }
-}
-
-@Composable
-private fun SetupRow(label: String, hint: String, onClick: () -> Unit) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .border(1.dp, Color(0xFF633806), RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
-            .padding(14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(label, color = Text1, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-            Text(hint, color = Muted, fontSize = 12.sp)
-        }
-        Text("Fix  →", color = Amber, fontSize = 13.sp)
-    }
-}
-
-private class SetupCheck(val key: String, val label: String, val hint: String, val done: Boolean, val fix: (Context) -> Unit)
-
-@SuppressLint("BatteryLife")
-private fun setupChecks(ctx: Context): List<SetupCheck> {
-    val notifOk = Build.VERSION.SDK_INT < 33 ||
-        ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
-    val pm = ctx.getSystemService(PowerManager::class.java)
-    val batteryOk = pm.isIgnoringBatteryOptimizations(ctx.packageName)
-    val pkg = Uri.parse("package:${ctx.packageName}")
-    return listOf(
-        SetupCheck("notif", "Allow notifications", "Without this, no alerts at all", notifOk) {
-            it.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, it.packageName))
-        },
-        SetupCheck("fullscreen", "Allow full-screen alerts", "Lets the alarm take over your lock screen", Alarm.canFullScreen(ctx)) {
-            if (Build.VERSION.SDK_INT >= 34) {
-                it.startActivity(Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, pkg))
-            }
-        },
-        SetupCheck("battery", "Don't let Android sleep this app", "Battery → Unrestricted, so alerts arrive instantly", batteryOk) {
-            try {
-                it.startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, pkg))
-            } catch (_: Exception) {
-                it.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkg))
-            }
-        },
-    )
 }
 
 private suspend fun fetchStatus(): WatcherStatus? {
