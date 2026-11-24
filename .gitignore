@@ -19,3 +19,5 @@ app/local.properties
 app/.idea/
 app/.kotlin/
 *.iml
+
+secrets-for-github/
