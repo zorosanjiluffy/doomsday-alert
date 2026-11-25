@@ -28,5 +28,12 @@ jobs:
       - uses: actions/upload-pages-artifact@v4
         with:
           path: web
+      # GitHub's Pages API sometimes can't find a just-uploaded artifact; wait and retry once.
+      - id: first
+        uses: actions/deploy-pages@v4
+        continue-on-error: true
+      - if: steps.first.outcome == 'failure'
+        run: sleep 30
       - id: deployment
+        if: steps.first.outcome == 'failure'
         uses: actions/deploy-pages@v4
