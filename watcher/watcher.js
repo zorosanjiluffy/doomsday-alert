@@ -2,9 +2,8 @@
 //
 // Every ~60s it reads the movie's city page for every language format and every
 // open date, compares against what it has already seen, and pushes:
-//   ALARM  (phone vibrates until opened) when a new theatre gets shows for a language,
-//          a new date opens, or a new language is listed
-//   INFO   (normal notification) when extra shows are added at a theatre already listed
+//   ALARM  (phone vibrates until opened) for anything new: every new show, a new screen,
+//          a new theatre, a new date, or a new language
 //
 // Push channels (any combination):
 //   - Firebase Cloud Messaging topic  -> the Doomsday Android app
@@ -134,6 +133,7 @@ function parsePage(nextData) {
           lang: s.lang,
           format: s.scrnFmt,
           screen: s.premiumLabel || s.audi || '',
+          audi: s.audi || s.premiumLabel || '',
           status: s.seatStatus || '',
           formatId: s.fid,
         });
@@ -269,6 +269,7 @@ async function notify(n) {
   // One id per alert, shared by the push and /status, so the app can drop duplicates
   // when the same alert arrives both ways.
   n.id = `${Date.now()}`;
+  log(`Alert (${n.kind}): ${n.title}`);
   await Promise.all([n.kind === 'status' ? null : sendFcm(n), sendNtfy(n)]);
   if (n.kind !== 'status') {
     status.lastAlert = { id: n.id, kind: n.kind, title: n.title, body: n.message, url: n.click, at: new Date().toISOString() };
@@ -336,13 +337,20 @@ async function check() {
   const newDates = dates.filter((d) => !state.dates.includes(d));
   const newFormats = formats.filter((f) => !state.formats.some((x) => x.id === f.id));
   const newShows = sessions.filter((s) => !state.seen[s.key]);
+  const clKey = (s) => `${s.cinemaId}|${s.lang}`;
+  const scrKey = (s) => `${s.cinemaId}|${s.lang}|${s.audi}`;
   const knownCL = new Set(state.cinemaLangs);
-  if (state.initialized && knownCL.size === 0) {
-    // Migrating an older state file: theatres whose shows we've already seen aren't new.
-    for (const s of sessions) if (state.seen[s.key]) knownCL.add(`${s.cinemaId}|${s.lang}`);
+  const knownScr = new Set(state.cinemaScreens || []);
+  if (state.initialized) {
+    // Older state files didn't track these: whatever we'd already seen isn't new.
+    for (const s of sessions) {
+      if (!state.seen[s.key]) continue;
+      if (!state.cinemaLangs.length) knownCL.add(clKey(s));
+      if (!state.cinemaScreens) knownScr.add(scrKey(s));
+    }
   }
-  const newCinemaShows = newShows.filter((s) => !knownCL.has(`${s.cinemaId}|${s.lang}`));
-  const extraShows = newShows.filter((s) => knownCL.has(`${s.cinemaId}|${s.lang}`));
+  const newTheatreShows = newShows.filter((s) => !knownCL.has(clKey(s)));
+  const newScreenShows = newShows.filter((s) => knownCL.has(clKey(s)) && !knownScr.has(scrKey(s)));
   const now = new Date().toISOString();
 
   if (!state.initialized) {
@@ -353,28 +361,37 @@ async function check() {
       click: baseUrl,
       tags: ['eyes'],
     });
-  } else if (newCinemaShows.length || newDates.length || newFormats.length) {
-    // ALARM: something genuinely new opened.
-    const parts = [];
-    const newTheatres = new Map();
-    for (const s of newCinemaShows) newTheatres.set(`${s.cinemaId}|${s.lang}`, s);
+  } else if (newShows.length || newDates.length || newFormats.length) {
+    // ALARM for anything new at all: every new show, screen, theatre, date or language.
+    const uniq = (arr, key) => [...new Map(arr.map((s) => [key(s), s])).values()];
+    const theatres = uniq(newTheatreShows, clKey);
+    const screens = uniq(newScreenShows, scrKey);
+    const langsOf = (arr) => [...new Set(arr.map((s) => s.lang))].join(' + ');
     let title;
-    if (newTheatres.size) {
-      const langs = [...new Set([...newTheatres.values()].map((s) => s.lang))].join(' + ');
-      const names = [...newTheatres.values()].map((s) => shortCinema(s.cinema));
-      title =
-        newTheatres.size === 1
-          ? `🚨 ${names[0]} just opened ${langs} tickets!`
-          : `🚨 ${newTheatres.size} more theatres opened ${langs} tickets!`;
+    if (theatres.length) {
+      const cinemaCount = new Set(theatres.map((s) => s.cinemaId)).size;
+      title = cinemaCount === 1
+        ? `🚨 ${shortCinema(theatres[0].cinema)} just opened ${langsOf(theatres)} tickets!`
+        : `🚨 ${cinemaCount} more theatres opened ${langsOf(theatres)} tickets!`;
+    } else if (screens.length) {
+      title = screens.length === 1
+        ? `🚨 New ${screens[0].lang} screen at ${shortCinema(screens[0].cinema)}${screens[0].audi ? ` (${screens[0].audi})` : ''}!`
+        : `🚨 ${screens.length} new screens opened for ${langsOf(screens)}!`;
     } else if (newDates.length) {
       title = `🚨 Booking opened for ${newDates.map(prettyDate).join(', ')}!`;
-    } else {
+    } else if (newFormats.length) {
       title = `🚨 ${newFormats.map((f) => f.language).join(', ')} shows are now listed!`;
+    } else {
+      const cinemas = new Set(newShows.map((s) => s.cinema));
+      title = newShows.length === 1
+        ? `🚨 New ${newShows[0].lang} show: ${shortCinema(newShows[0].cinema)} ${newShows[0].time}!`
+        : `🚨 ${newShows.length} new ${langsOf(newShows)} shows (${cinemas.size} theatre${cinemas.size > 1 ? 's' : ''})!`;
     }
+    const parts = [];
     if (newFormats.length) parts.push(`New language: ${newFormats.map((f) => f.language).join(', ')}`);
     if (newDates.length) parts.push(`New dates: ${newDates.map(prettyDate).join(' · ')}`);
     if (newShows.length) parts.push(describeShows(newShows));
-    const first = newCinemaShows[0] || newShows[0];
+    const first = theatres[0] || screens[0] || newShows[0];
     await notify({
       kind: 'alarm',
       title,
@@ -382,21 +399,15 @@ async function check() {
       click: first ? pageUrl(first.formatId, first.date) : pageUrl(null, newDates[0]),
       tags: ['rotating_light', 'ticket'],
     });
-  } else if (extraShows.length) {
-    const cinemas = new Set(extraShows.map((s) => s.cinema));
-    const first = extraShows[0];
-    await notify({
-      kind: 'info',
-      title: `🎟️ ${extraShows.length} more show${extraShows.length > 1 ? 's' : ''} added (${cinemas.size} theatre${cinemas.size > 1 ? 's' : ''})`,
-      message: describeShows(extraShows),
-      click: pageUrl(first.formatId, first.date),
-      tags: ['ticket'],
-    });
   }
 
   for (const s of newShows) state.seen[s.key] = now;
-  for (const s of sessions) knownCL.add(`${s.cinemaId}|${s.lang}`);
+  for (const s of sessions) {
+    knownCL.add(clKey(s));
+    knownScr.add(scrKey(s));
+  }
   state.cinemaLangs = [...knownCL];
+  state.cinemaScreens = [...knownScr];
   state.dates = [...new Set([...state.dates, ...dates])].sort();
   state.formats = [...new Map([...state.formats, ...formats].map((f) => [f.id, f])).values()];
   state.initialized = true;
@@ -405,7 +416,7 @@ async function check() {
 
   refreshStatus(sessions, dates, formats);
   log(
-    `Checked: ${sessions.length} shows, ${dates.length} dates, ${formats.length} formats | new theatre-lang: ${new Set(newCinemaShows.map((s) => s.cinemaId + s.lang)).size}, extra shows: ${extraShows.length}, new dates: ${newDates.length}`,
+    `Checked: ${sessions.length} shows, ${dates.length} dates, ${formats.length} formats | new shows: ${newShows.length} (new theatres: ${new Set(newTheatreShows.map(clKey)).size}, new screens: ${new Set(newScreenShows.map(scrKey)).size}), new dates: ${newDates.length}`,
   );
 }
 
