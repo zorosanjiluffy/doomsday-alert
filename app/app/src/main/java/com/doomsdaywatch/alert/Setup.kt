@@ -125,6 +125,8 @@ private fun openAutostart(ctx: Context) {
     val tries = listOf(
         cmp("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity"),
         cmp("com.vivo.permissionmanager", "com.vivo.permissionmanager.activity.BgStartUpManagerActivity"),
+        cmp("com.vivo.permissionmanager", "com.vivo.permissionmanager.activity.PurviewTabActivity"),
+        cmp("com.iqoo.secure", "com.iqoo.secure.safecenter.SafeCenterActivity"),
         cmp("com.iqoo.secure", "com.iqoo.secure.ui.phoneoptimize.BgStartUpManager"),
         cmp("com.iqoo.secure", "com.iqoo.secure.ui.phoneoptimize.AddWhiteListActivity"),
         cmp("com.coloros.safecenter", "com.coloros.safecenter.permission.startup.StartupAppListActivity"),
