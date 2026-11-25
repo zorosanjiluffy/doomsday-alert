@@ -5,7 +5,7 @@
   const TAU = Math.PI * 2;
   const stage = document.getElementById('stage');
   const scenes = [...stage.querySelectorAll('.scene')];
-  const dots = [...stage.querySelectorAll('.dots i')];
+  const dots = [...document.querySelectorAll('.dots i')];
   const flash = document.getElementById('flash');
   const fxThor = document.getElementById('fx-thor');
   const fxLoki = document.getElementById('fx-loki');
@@ -43,7 +43,7 @@
   }
   if (!(window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function')) askTilt();
 
-  stage.addEventListener('click', () => { askTilt(); show((index + 1) % 3); });
+  document.getElementById('artTap').addEventListener('click', () => { askTilt(); show((index + 1) % 3); });
 
   // ---- helpers ----
   function fit(canvas) {

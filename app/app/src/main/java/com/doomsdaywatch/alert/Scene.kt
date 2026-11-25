@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -49,6 +50,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlin.math.PI
 import kotlin.math.cos
@@ -64,7 +66,6 @@ import kotlin.random.Random
 
 private const val SCENE_S = 8f
 private const val FADE_S = 0.9f
-private const val BOX_ASPECT = 0.75f // width / height of the scene area
 
 private val BoltGlow = Color(0xFF378ADD)
 private val BoltMid = Color(0xFF85B7EB)
@@ -72,13 +73,21 @@ private val BoltCore = Color(0xFFF4F9FF)
 private val LokiGlow = Color(0xFFC0DD97)
 private val LokiMist = Color(0xFF5DCAA5)
 
+/**
+ * Full-screen animated background. The home content sits on top of it.
+ * @param skip     bump to jump to the next scene (taps on the art area)
+ * @param sigilTop where the Doom sigil's square starts from the top of the screen
+ * @param onIndex  told which scene is showing (for the dots)
+ */
 @Composable
 fun DoomScene(
     modifier: Modifier = Modifier,
     colors: SigilColors,
     speed: Float,
     pulseKey: Any?,
-    overlay: @Composable BoxScope.() -> Unit,
+    skip: Int,
+    sigilTop: Dp,
+    onIndex: (Int) -> Unit,
 ) {
     var time by remember { mutableFloatStateOf(0f) }
     var index by remember { mutableIntStateOf(0) }
@@ -92,6 +101,7 @@ fun DoomScene(
         index = (index + 1) % 3
         switchedAt = time
         nextSwitch = time + SCENE_S
+        onIndex(index)
     }
 
     LaunchedEffect(Unit) {
@@ -104,18 +114,12 @@ fun DoomScene(
             if (time >= nextSwitch) advance()
         }
     }
+    LaunchedEffect(skip) { if (skip > 0) advance() }
 
     val fade = ((time - switchedAt) / FADE_S).coerceIn(0f, 1f)
-    Box(
-        modifier
-            .fillMaxWidth()
-            .aspectRatio(BOX_ASPECT)
-            .clip(RoundedCornerShape(20.dp))
-            .background(Color(0xFF07090A))
-            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { advance() },
-    ) {
-        if (fade < 1f && prev != index) SceneLayer(prev, 1f - fade, time, colors, speed, pulseKey, tilt.value)
-        SceneLayer(index, fade, time, colors, speed, pulseKey, tilt.value)
+    Box(modifier.fillMaxSize().background(Color(0xFF07090A))) {
+        if (fade < 1f && prev != index) SceneLayer(prev, 1f - fade, time, colors, speed, pulseKey, tilt.value, sigilTop)
+        SceneLayer(index, fade, time, colors, speed, pulseKey, tilt.value, sigilTop)
 
         // Transition flavour: a lightning flash into Thor, a wash of green mist into Loki.
         if (fade < 1f) {
@@ -128,21 +132,29 @@ fun DoomScene(
             }
         }
 
-        // Which scene is showing.
-        Row(
-            Modifier.align(Alignment.TopCenter).padding(top = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            repeat(3) { i ->
-                Box(
-                    Modifier
-                        .size(if (i == index) 18.dp else 6.dp, 6.dp)
-                        .clip(CircleShape)
-                        .background(if (i == index) Color(0xFFE1F5EE) else Color(0x66E1F5EE)),
-                )
-            }
+        // Fades so the picture melts into the page and the text stays readable.
+        Canvas(Modifier.fillMaxSize()) {
+            val top = Brush.verticalGradient(
+                0f to Color(0xB307090A), 0.1f to Color(0x0007090A),
+                0.42f to Color(0x0007090A), 0.57f to Color(0xD907090A), 0.65f to Color(0xFF07090A),
+            )
+            drawRect(top)
         }
-        overlay()
+    }
+}
+
+/** The little scene dots. */
+@Composable
+fun SceneDots(index: Int, modifier: Modifier = Modifier) {
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        repeat(3) { i ->
+            Box(
+                Modifier
+                    .size(if (i == index) 18.dp else 6.dp, 6.dp)
+                    .clip(CircleShape)
+                    .background(if (i == index) Color(0xFFE1F5EE) else Color(0x66E1F5EE)),
+            )
+        }
     }
 }
 
@@ -155,6 +167,7 @@ private fun BoxScope.SceneLayer(
     speed: Float,
     pulseKey: Any?,
     tilt: Offset,
+    sigilTop: Dp,
 ) {
     val maxShift = with(LocalDensity.current) { 14.dp.toPx() }
     // Tilt, plus a slow drift so it breathes even when the phone is still.
@@ -166,7 +179,7 @@ private fun BoxScope.SceneLayer(
                 .fillMaxWidth()
                 .aspectRatio(1f)
                 .align(Alignment.TopCenter)
-                .padding(top = 18.dp)
+                .padding(top = sigilTop)
                 .graphicsLayer {
                     this.alpha = alpha
                     translationX = t.x * maxShift * 0.5f
@@ -197,7 +210,8 @@ private fun PictureScene(
     maxShift: Float,
     effects: DrawScope.(ImgMap, Float, Float, Float) -> Unit,
 ) {
-    Box(Modifier.fillMaxSize().graphicsLayer { this.alpha = alpha }) {
+    // The picture fills the top of the screen (the art area) and melts into black below.
+    Box(Modifier.fillMaxWidth().fillMaxHeight(0.64f).graphicsLayer { this.alpha = alpha }) {
         Image(
             painter = painterResource(res),
             contentDescription = null,

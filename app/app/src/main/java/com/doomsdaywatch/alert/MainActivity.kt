@@ -19,6 +19,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -144,43 +146,62 @@ private fun HomeScreen() {
     val daysLeft = msLeft / 86_400_000f
     val speed = 1f + 2f * (1f - (daysLeft / 30f).coerceIn(0f, 1f))
 
+    var skip by remember { mutableIntStateOf(0) }
+    var sceneIndex by remember { mutableIntStateOf(0) }
+
+    BoxWithConstraints(Modifier.fillMaxSize().background(Black)) {
+    val artHeight = maxHeight * 0.6f
+    // The living art fills the screen behind everything.
+    DoomScene(
+        Modifier.fillMaxSize(),
+        colors = if (recentAlarm) RedSigil else GreenSigil,
+        speed = speed,
+        pulseKey = status?.lastCheck,
+        skip = skip,
+        sigilTop = (artHeight - maxWidth) / 2 + 40.dp,
+        onIndex = { sceneIndex = it },
+    )
+
     Column(
         Modifier
             .fillMaxSize()
-            .background(Black)
             .systemBarsPadding()
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 20.dp, vertical = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         StatusPill(status, pushOn = DoomApp.pushConfigured && AlertStore.isSubscribed(ctx))
-        Spacer(Modifier.height(8.dp))
 
-        DoomScene(
-            colors = if (recentAlarm) RedSigil else GreenSigil,
-            speed = speed,
-            pulseKey = status?.lastCheck,
+        // The art shows through here; tap to jump to the next scene.
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(artHeight)
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { skip++ },
         ) {
-            Column(
-                Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 14.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(Black.copy(alpha = 0.82f))
-                    .border(1.dp, Color(0xFF0F6E56), RoundedCornerShape(14.dp))
-                    .padding(horizontal = 14.dp, vertical = 8.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Text(if (msLeft > 0) "Doom arrives in" else "Doom has arrived", color = GreenBright, fontSize = 12.sp)
-                Text(
-                    countdown(msLeft),
-                    color = Text1,
-                    fontSize = 24.sp,
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.Bold,
-                )
+            Column(Modifier.align(Alignment.BottomCenter), horizontalAlignment = Alignment.CenterHorizontally) {
+                SceneDots(sceneIndex)
+                Spacer(Modifier.height(10.dp))
+                Column(
+                    Modifier
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Black.copy(alpha = 0.6f))
+                        .border(1.dp, Color(0xFF0F6E56), RoundedCornerShape(14.dp))
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(if (msLeft > 0) "Doom arrives in" else "Doom has arrived", color = GreenBright, fontSize = 12.sp)
+                    Text(
+                        countdown(msLeft),
+                        color = Text1,
+                        fontSize = 24.sp,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
             }
         }
+        Spacer(Modifier.height(14.dp))
 
         Text(
             "Avengers: Doomsday · Chennai",
@@ -241,6 +262,7 @@ private fun HomeScreen() {
             fontSize = 11.sp,
             textAlign = TextAlign.Center,
         )
+    }
     }
 }
 
