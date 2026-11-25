@@ -328,6 +328,7 @@ function refreshStatus(sessions, dates, formats) {
 // ---------- main check ----------
 
 let consecutiveFailures = 0;
+let latestShows = { updated: null, baselineAt: null, shows: [] };
 let testMeLog = [];
 let failureAlertSent = false;
 
@@ -415,6 +416,25 @@ async function check() {
   state.lastCheck = now;
   saveState(state);
 
+  const seenTimes = Object.values(state.seen).sort();
+  latestShows = {
+    updated: now,
+    baselineAt: seenTimes[0] || now,
+    shows: sessions
+      .map((x) => ({
+        lang: x.lang,
+        date: x.date,
+        cinema: shortCinema(x.cinema),
+        time: x.time,
+        iso: x.timeISO,
+        screen: x.screen,
+        format: x.format,
+        status: x.status,
+        url: pageUrl(x.formatId, x.date),
+        firstSeen: state.seen[x.key] || now,
+      }))
+      .sort((a, b) => (a.iso || '').localeCompare(b.iso || '') || a.cinema.localeCompare(b.cinema)),
+  };
   refreshStatus(sessions, dates, formats);
   log(
     `Checked: ${sessions.length} shows, ${dates.length} dates, ${formats.length} formats | new shows: ${newShows.length} (new theatres: ${new Set(newTheatreShows.map(clKey)).size}, new screens: ${new Set(newScreenShows.map(scrKey)).size}), new dates: ${newDates.length}`,
@@ -465,6 +485,17 @@ function startServer() {
       if (url.pathname === '/status') {
         res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' });
         return res.end(JSON.stringify(status));
+      }
+      if (url.pathname === '/shows') {
+        const istDay = (iso) => new Date(new Date(iso).getTime() + 330 * 60000).toISOString().slice(0, 10);
+        const today = istDay(new Date().toISOString());
+        const base = latestShows.baselineAt;
+        const shows = latestShows.shows.map(({ firstSeen, iso, ...x }) => ({
+          ...x,
+          isNew: !!base && firstSeen > base && istDay(firstSeen) === today,
+        }));
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' });
+        return res.end(JSON.stringify({ updated: latestShows.updated, today, newToday: shows.filter((x) => x.isNew).length, shows }));
       }
       if (url.pathname === '/subscribe-web') {
         // The iPhone/web app posts its FCM token here; we add it to the alerts topic.
