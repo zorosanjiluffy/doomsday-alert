@@ -61,12 +61,89 @@ class SetupStep(
 
 private const val PREFS = "doom_setup"
 
-/** Brands whose own battery managers kill background apps unless Autostart is allowed. */
-private val AGGRESSIVE_OEMS = setOf("xiaomi", "redmi", "poco", "vivo", "iqoo", "oppo", "realme", "oneplus", "huawei", "honor", "tecno", "infinix")
+/**
+ * Brand-specific extra steps. Many brands add their own battery manager and an app killer on top
+ * of Android; these guides say where each brand hides the switches. Stock-Android phones
+ * (Pixel, Motorola, Nothing, Nokia…) return null and need nothing extra.
+ */
+class BrandGuide(
+    val name: String,
+    val autostart: Boolean,
+    val power: String,
+    val lock: String,
+    val powerScreens: (String) -> List<Intent>,
+)
 
-private fun manufacturer() = Build.MANUFACTURER.lowercase()
+private fun manufacturer(): String {
+    val override = try {
+        @SuppressLint("PrivateApi")
+        val sp = Class.forName("android.os.SystemProperties")
+        sp.getMethod("get", String::class.java).invoke(null, "debug.doom.brand") as String
+    } catch (_: Exception) {
+        ""
+    }
+    return override.ifBlank { Build.MANUFACTURER }.lowercase()
+}
 
-fun needsAutostartStep(): Boolean = manufacturer() in AGGRESSIVE_OEMS
+private fun cmp(p: String, c: String) = Intent().setComponent(ComponentName(p, c))
+private fun appInfo(pkg: String) = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$pkg"))
+
+fun brandGuide(): BrandGuide? {
+    val m = manufacturer()
+    val brand = m.replaceFirstChar { it.uppercase() }
+    return when {
+        m in setOf("vivo", "iqoo") -> BrandGuide(
+            brand, true,
+            "Settings → Battery → Background power consumption management → Doomsday Alert → Allow (High background power consumption).",
+            "Open Recent apps, pull the Doomsday Alert card down (or long-press it) and tap Lock.",
+        ) { pkg ->
+            listOf(
+                cmp("com.vivo.abe", "com.vivo.applicationbehaviorengine.ui.ExcessivePowerManagerActivity"),
+                cmp("com.iqoo.powersaving", "com.iqoo.powersaving.PowerSavingManagerActivity"),
+                appInfo(pkg),
+            )
+        }
+        m in setOf("xiaomi", "redmi", "poco") -> BrandGuide(
+            brand, true,
+            "Battery saver → No restrictions for Doomsday Alert.",
+            "Open Recent apps, long-press the Doomsday Alert card and tap the lock icon.",
+        ) { pkg ->
+            listOf(
+                cmp("com.miui.powerkeeper", "com.miui.powerkeeper.ui.HiddenAppsConfigActivity")
+                    .putExtra("package_name", pkg).putExtra("package_label", "Doomsday Alert"),
+                appInfo(pkg),
+            )
+        }
+        m in setOf("oppo", "realme", "oneplus") -> BrandGuide(
+            brand, true,
+            "App info → Battery usage → turn ON Allow background activity (and Allow auto launch if shown).",
+            "Open Recent apps, tap the ⋮ on the Doomsday Alert card (or long-press it) and tap Lock.",
+        ) { pkg -> listOf(appInfo(pkg)) }
+        m in setOf("huawei", "honor") -> BrandGuide(
+            brand, true,
+            "Settings → Battery → App launch → Doomsday Alert → Manage manually, and turn all three switches ON.",
+            "Open Recent apps, pull the Doomsday Alert card down and tap the lock.",
+        ) { pkg ->
+            listOf(
+                cmp("com.huawei.systemmanager", "com.huawei.systemmanager.power.ui.HwPowerManagerActivity"),
+                appInfo(pkg),
+            )
+        }
+        m == "samsung" -> BrandGuide(
+            brand, false,
+            "App info → Battery → Unrestricted. Also check Settings → Battery → Background usage limits: Doomsday Alert must NOT be in Sleeping apps or Deep sleeping apps.",
+            "Open Recent apps, tap the Doomsday Alert icon above its card and tap Keep open.",
+        ) { pkg -> listOf(appInfo(pkg)) }
+        m in setOf("tecno", "infinix", "itel") -> BrandGuide(
+            brand, true,
+            "Phone Master → Power saving / App management → Doomsday Alert → allow background running.",
+            "Open Recent apps, pull the Doomsday Alert card down and tap the lock.",
+        ) { pkg -> listOf(cmp("com.transsion.phonemaster", "com.cyin.himgr.powermanager.views.activity.PowerManagerActivity"), appInfo(pkg)) }
+        else -> null
+    }
+}
+
+fun needsAutostartStep(): Boolean = brandGuide()?.autostart == true
 
 fun requiredSteps(ctx: Context): List<SetupStep> {
     val p = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -87,6 +164,26 @@ fun requiredSteps(ctx: Context): List<SetupStep> {
             "Allow background running", batteryOk,
         ),
     )
+    val cm = ctx.getSystemService(android.net.ConnectivityManager::class.java)
+    val dataOk = cm.restrictBackgroundStatus != android.net.ConnectivityManager.RESTRICT_BACKGROUND_STATUS_ENABLED
+    if (!dataOk || p.getBoolean("dataWasBlocked", false)) {
+        if (!dataOk) p.edit().putBoolean("dataWasBlocked", true).apply()
+        steps += SetupStep(
+            "data", "Allow background data",
+            "Data Saver is blocking this app's internet in the background, so the backup check can't reach the watcher. Turn on Unrestricted data for Doomsday Alert.",
+            "Open data setting", dataOk,
+        )
+    }
+    val nm = ctx.getSystemService(android.app.NotificationManager::class.java)
+    val ch = nm.getNotificationChannel(Alarm.CH_ALARM)
+    val channelOk = ch == null || ch.importance >= android.app.NotificationManager.IMPORTANCE_HIGH
+    if (!channelOk) {
+        steps += SetupStep(
+            "channel", "Turn the alarm sound back on",
+            "The \"Tickets opened (alarm)\" notifications are turned off or silenced, so the alarm can't ring. Set them to Allow with sound and pop-up.",
+            "Open alarm notification setting", false,
+        )
+    }
     if (Build.VERSION.SDK_INT >= 34) {
         steps += SetupStep(
             "fullscreen", "Allow full-screen alarm",
@@ -94,12 +191,24 @@ fun requiredSteps(ctx: Context): List<SetupStep> {
             "Open setting and turn it on", Alarm.canFullScreen(ctx),
         )
     }
-    if (needsAutostartStep()) {
-        val brand = Build.MANUFACTURER.replaceFirstChar { it.uppercase() }
+    val guide = brandGuide()
+    if (guide != null) {
+        if (guide.autostart) {
+            steps += SetupStep(
+                "autostart", "Turn on Autostart (${guide.name})",
+                "${guide.name} blocks apps from starting unless you open them. Find Doomsday Alert and switch Autostart ON, so a ticket alert can wake the app even when it's closed.",
+                "Open Autostart settings", p.getBoolean("autostartDone", false),
+            )
+        }
         steps += SetupStep(
-            "autostart", "Turn on Autostart ($brand)",
-            "$brand phones kill apps you swipe away. Find Doomsday Alert and switch Autostart ON. Also open Recent apps, long-press Doomsday Alert and tap the lock icon so swiping never kills it.",
-            "Open Autostart settings", p.getBoolean("autostartDone", false),
+            "power", "Allow high background power (${guide.name})",
+            "${guide.name} has its own battery manager that freezes apps and cuts their internet. ${guide.power}",
+            "Open battery settings", p.getBoolean("powerDone", false),
+        )
+        steps += SetupStep(
+            "lock", "Lock it in Recent apps",
+            "On ${guide.name}, Clear all and swiping away force-stop apps. A locked app is never killed. ${guide.lock}",
+            "I've locked it", p.getBoolean("lockDone", false),
         )
     }
     return steps
@@ -120,8 +229,6 @@ private fun openBattery(ctx: Context) {
 }
 
 private fun openAutostart(ctx: Context) {
-    val pkg = Uri.parse("package:${ctx.packageName}")
-    fun cmp(p: String, c: String) = Intent().setComponent(ComponentName(p, c))
     val tries = listOf(
         cmp("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity"),
         cmp("com.vivo.permissionmanager", "com.vivo.permissionmanager.activity.BgStartUpManagerActivity"),
@@ -136,7 +243,7 @@ private fun openAutostart(ctx: Context) {
         cmp("com.huawei.systemmanager", "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity"),
         cmp("com.hihonor.systemmanager", "com.hihonor.systemmanager.startupmgr.ui.StartupNormalAppListActivity"),
         cmp("com.transsion.phonemaster", "com.cyin.himgr.autostart.AutoStartActivity"),
-        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkg),
+        appInfo(ctx.packageName),
     )
     startFirst(ctx, tries)
 }
@@ -144,7 +251,9 @@ private fun openAutostart(ctx: Context) {
 private fun startFirst(ctx: Context, intents: List<Intent>) {
     for (i in intents) {
         try {
-            ctx.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            // From the setup screen, open settings in the app's own task so Back returns here.
+            if (ctx !is Activity) i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            ctx.startActivity(i)
             return
         } catch (_: Exception) {
         }
@@ -168,7 +277,8 @@ fun SetupScreen(steps: List<SetupStep>, onChanged: () -> Unit) {
     val ctx = LocalContext.current
     val activity = ctx as? Activity
     val prefs = remember { ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE) }
-    var autostartOpened by remember { mutableIntStateOf(if (prefs.getBoolean("autostartOpened", false)) 1 else 0) }
+    var opened by remember { mutableIntStateOf(0) } // bumps when a settings page is opened
+    fun wasOpened(key: String) = opened >= 0 && prefs.getBoolean("${key}Opened", false)
 
     val notifLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         prefs.edit().putInt("notifAsks", prefs.getInt("notifAsks", 0) + 1).apply()
@@ -180,8 +290,7 @@ fun SetupScreen(steps: List<SetupStep>, onChanged: () -> Unit) {
             // Android stops showing the popup after two "Don't allow"s: send them to the setting.
             ctx.startActivity(
                 Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
-                    .putExtra(Settings.EXTRA_APP_PACKAGE, ctx.packageName)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                    .putExtra(Settings.EXTRA_APP_PACKAGE, ctx.packageName),
             )
         }
     }
@@ -196,8 +305,7 @@ fun SetupScreen(steps: List<SetupStep>, onChanged: () -> Unit) {
             } else {
                 ctx.startActivity(
                     Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
-                        .putExtra(Settings.EXTRA_APP_PACKAGE, ctx.packageName)
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                        .putExtra(Settings.EXTRA_APP_PACKAGE, ctx.packageName),
                 )
             }
             "battery" -> openBattery(ctx)
@@ -212,8 +320,33 @@ fun SetupScreen(steps: List<SetupStep>, onChanged: () -> Unit) {
             }
             "autostart" -> {
                 prefs.edit().putBoolean("autostartOpened", true).apply()
-                autostartOpened = 1
+                opened++
                 openAutostart(ctx)
+            }
+            "data" -> startFirst(
+                ctx,
+                listOf(
+                    Intent(Settings.ACTION_IGNORE_BACKGROUND_DATA_RESTRICTIONS_SETTINGS, Uri.parse("package:${ctx.packageName}")),
+                    appInfo(ctx.packageName),
+                ),
+            )
+            "channel" -> startFirst(
+                ctx,
+                listOf(
+                    Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                        .putExtra(Settings.EXTRA_APP_PACKAGE, ctx.packageName)
+                        .putExtra(Settings.EXTRA_CHANNEL_ID, Alarm.CH_ALARM),
+                    Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, ctx.packageName),
+                ),
+            )
+            "power" -> {
+                prefs.edit().putBoolean("powerOpened", true).apply()
+                opened++
+                startFirst(ctx, brandGuide()?.powerScreens?.invoke(ctx.packageName) ?: listOf(appInfo(ctx.packageName)))
+            }
+            "lock" -> {
+                prefs.edit().putBoolean("lockDone", true).apply()
+                onChanged()
             }
         }
     }
@@ -290,12 +423,21 @@ fun SetupScreen(steps: List<SetupStep>, onChanged: () -> Unit) {
                 if (!s.done && active) {
                     Spacer(Modifier.height(8.dp))
                     Text(s.why, color = Text2, fontSize = 14.sp, lineHeight = 20.sp)
+                    if (s.key == "lock") {
+                        Spacer(Modifier.height(12.dp))
+                        LockPicture(brandGuide()?.name ?: "")
+                    }
                     Spacer(Modifier.height(14.dp))
-                    BigButton(s.button, Amber) { act(s) }
-                    if (s.key == "autostart" && autostartOpened == 1) {
+                    BigButton(s.button, if (s.key == "lock") Green else Amber) { act(s) }
+                    val confirm = when (s.key) {
+                        "autostart" -> "I've turned Autostart ON"
+                        "power" -> "I've allowed it"
+                        else -> null
+                    }
+                    if (confirm != null && wasOpened(s.key)) {
                         Spacer(Modifier.height(10.dp))
-                        BigButton("I've turned Autostart ON", Green) {
-                            prefs.edit().putBoolean("autostartDone", true).apply()
+                        BigButton(confirm, Green) {
+                            prefs.edit().putBoolean("${s.key}Done", true).apply()
                             onChanged()
                         }
                     }
@@ -308,6 +450,64 @@ fun SetupScreen(steps: List<SetupStep>, onChanged: () -> Unit) {
             "Your choices stay on your phone. The app only receives ticket alerts.",
             color = Muted, fontSize = 12.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth(),
         )
+    }
+}
+
+/** A small drawn picture of the Recent apps screen with the lock highlighted. */
+@Composable
+private fun LockPicture(brand: String) {
+    val samsung = brand.equals("Samsung", ignoreCase = true)
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color(0xFF111816))
+            .padding(14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // Phone with three recent-app cards; ours in the middle, with the lock.
+        Box(
+            Modifier
+                .size(96.dp, 150.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .border(2.dp, Color(0xFF2A2F2D), RoundedCornerShape(14.dp))
+                .padding(8.dp),
+        ) {
+            Box(Modifier.align(Alignment.CenterStart).size(16.dp, 92.dp).clip(RoundedCornerShape(6.dp)).background(Color(0xFF1E2522)))
+            Box(Modifier.align(Alignment.CenterEnd).size(16.dp, 92.dp).clip(RoundedCornerShape(6.dp)).background(Color(0xFF1E2522)))
+            Column(
+                Modifier
+                    .align(Alignment.Center)
+                    .size(52.dp, 110.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color(0xFF0B2A20))
+                    .border(1.5.dp, Amber, RoundedCornerShape(8.dp)),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Spacer(Modifier.height(6.dp))
+                Box(Modifier.size(16.dp).clip(CircleShape).background(Green))
+                Spacer(Modifier.height(4.dp))
+                Text("Doomsday", color = Text1, fontSize = 8.sp)
+                Spacer(Modifier.weight(1f))
+                Box(
+                    Modifier.padding(bottom = 8.dp).size(26.dp).clip(CircleShape).background(Amber),
+                    contentAlignment = Alignment.Center,
+                ) { Text("🔒", fontSize = 13.sp) }
+            }
+        }
+        Spacer(Modifier.width(14.dp))
+        Column {
+            Text("1. Open Recent apps", color = Text1, fontSize = 13.sp)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                if (samsung) "2. Tap the Doomsday Alert icon" else "2. Pull the card down or long-press it",
+                color = Text1, fontSize = 13.sp,
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(if (samsung) "3. Tap Keep open" else "3. Tap the 🔒 lock", color = Amber, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(8.dp))
+            Text("A small lock appears on the card when it's done.", color = Muted, fontSize = 11.sp, lineHeight = 15.sp)
+        }
     }
 }
 
