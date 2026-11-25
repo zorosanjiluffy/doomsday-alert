@@ -98,7 +98,7 @@ fun requiredSteps(ctx: Context): List<SetupStep> {
         val brand = Build.MANUFACTURER.replaceFirstChar { it.uppercase() }
         steps += SetupStep(
             "autostart", "Turn on Autostart ($brand)",
-            "$brand phones block background apps by their own rules. Find Doomsday Alert and switch Autostart ON, then come back.",
+            "$brand phones kill apps you swipe away. Find Doomsday Alert and switch Autostart ON. Also open Recent apps, long-press Doomsday Alert and tap the lock icon so swiping never kills it.",
             "Open Autostart settings", p.getBoolean("autostartDone", false),
         )
     }

@@ -105,7 +105,9 @@ private fun DoomRoot() {
         }
     }
     val steps = remember(tick) { requiredSteps(ctx) }
-    if (steps.all { it.done }) HomeScreen() else SetupScreen(steps) { tick++ }
+    val ready = steps.all { it.done }
+    LaunchedEffect(ready) { if (ready) Guard.start(ctx.applicationContext) }
+    if (ready) HomeScreen() else SetupScreen(steps) { tick++ }
 }
 
 @Composable
@@ -154,13 +156,11 @@ private fun HomeScreen() {
         StatusPill(status, pushOn = DoomApp.pushConfigured && AlertStore.isSubscribed(ctx))
         Spacer(Modifier.height(8.dp))
 
-        Box(Modifier.fillMaxWidth().aspectRatio(1f), contentAlignment = Alignment.Center) {
-            DoomSigil(
-                Modifier.fillMaxSize(),
-                colors = if (recentAlarm) RedSigil else GreenSigil,
-                speed = speed,
-                pulseKey = status?.lastCheck,
-            )
+        DoomScene(
+            colors = if (recentAlarm) RedSigil else GreenSigil,
+            speed = speed,
+            pulseKey = status?.lastCheck,
+        ) {
             Column(
                 Modifier
                     .clip(RoundedCornerShape(14.dp))

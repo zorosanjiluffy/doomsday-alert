@@ -42,10 +42,11 @@ tick();
 setInterval(tick, 1000);
 
 // ---------- watcher status ----------
-const ago = (ms) => {
+// A hoisted function: tick() runs before this point and needs it.
+function ago(ms) {
   const s = Math.max(0, Math.floor(ms / 1000));
   return s < 60 ? `${s}s ago` : s < 3600 ? `${Math.floor(s / 60)} min ago` : s < 86400 ? `${Math.floor(s / 3600)} h ago` : `${Math.floor(s / 86400)} d ago`;
-};
+}
 
 async function loadStatus() {
   if (!cfg.watcherUrl) return;

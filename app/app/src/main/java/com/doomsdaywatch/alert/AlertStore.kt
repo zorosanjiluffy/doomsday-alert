@@ -27,6 +27,26 @@ object AlertStore {
         )
     }
 
+    /**
+     * Returns true the first time an alert id is seen, false for repeats. The same alert can
+     * arrive by push and by the backup check; only the first one rings.
+     */
+    @Synchronized
+    fun claim(ctx: Context, id: String?): Boolean {
+        if (id.isNullOrEmpty()) return true
+        val p = prefs(ctx)
+        val seen = p.getString("seenIds", "")!!.split(',').filter { it.isNotEmpty() }
+        if (id in seen) return false
+        p.edit().putString("seenIds", (seen.takeLast(30) + id).joinToString(",")).commit()
+        return true
+    }
+
+    /** Marks an id as seen without ringing (used for the alert that was already current at install). */
+    fun markSeen(ctx: Context, id: String) { claim(ctx, id) }
+
+    fun hasBaseline(ctx: Context) = prefs(ctx).getBoolean("pollBaseline", false)
+    fun setBaseline(ctx: Context) = prefs(ctx).edit().putBoolean("pollBaseline", true).apply()
+
     fun setSubscribed(ctx: Context, ok: Boolean) = prefs(ctx).edit().putBoolean("subscribed", ok).apply()
     fun isSubscribed(ctx: Context) = prefs(ctx).getBoolean("subscribed", false)
 }

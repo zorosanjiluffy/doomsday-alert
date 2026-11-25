@@ -14,9 +14,20 @@ class DoomMessagingService : FirebaseMessagingService() {
         val body = d["body"] ?: msg.notification?.body ?: ""
         val url = d["url"]?.takeIf { it.startsWith("https://") } ?: BuildConfig.DISTRICT_URL
         Log.i(DoomApp.TAG, "Push received: $kind / $title")
+        deliver(this, d["id"], kind, title, body, url)
+        Guard.start(this)
+    }
 
-        AlertStore.save(this, LastAlert(kind, title, body, url, System.currentTimeMillis()))
-        if (kind == "alarm") Alarm.fire(this, title, body, url) else Alarm.info(this, title, body, url)
+    companion object {
+        /** Shows an alert once, whether it came by push or by the backup check. */
+        fun deliver(ctx: android.content.Context, id: String?, kind: String, title: String, body: String, url: String) {
+            if (!AlertStore.claim(ctx, id)) {
+                Log.i(DoomApp.TAG, "Alert $id already shown, skipping duplicate")
+                return
+            }
+            AlertStore.save(ctx, LastAlert(kind, title, body, url, System.currentTimeMillis()))
+            if (kind == "alarm") Alarm.fire(ctx, title, body, url) else Alarm.info(ctx, title, body, url)
+        }
     }
 
     override fun onNewToken(token: String) {
