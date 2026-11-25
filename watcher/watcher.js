@@ -203,7 +203,7 @@ function getFcm() {
   return fcm;
 }
 
-async function sendFcm({ kind, title, message, click }) {
+async function sendFcm({ id, kind, title, message, click }) {
   const m = getFcm();
   if (!m) return;
   try {
@@ -214,7 +214,7 @@ async function sendFcm({ kind, title, message, click }) {
         title,
         body: message.length > FCM_MAX_BODY ? message.slice(0, FCM_MAX_BODY) + '\n…and more' : message,
         url: click || baseUrl,
-        id: String(Date.now()),
+        id,
         sentAt: new Date().toISOString(),
       },
       android: { priority: 'high', ttl: kind === 'alarm' ? 3 * 3600 * 1000 : 6 * 3600 * 1000 },
@@ -266,8 +266,13 @@ async function sendNtfy({ kind, title, message, click, tags = [] }) {
 
 // kind: "alarm" (vibrate until opened), "info" (normal), "status" (watcher health; ntfy only)
 async function notify(n) {
+  // One id per alert, shared by the push and /status, so the app can drop duplicates
+  // when the same alert arrives both ways.
+  n.id = `${Date.now()}`;
   await Promise.all([n.kind === 'status' ? null : sendFcm(n), sendNtfy(n)]);
-  if (n.kind !== 'status') status.lastAlert = { kind: n.kind, title: n.title, body: n.message, url: n.click, at: new Date().toISOString() };
+  if (n.kind !== 'status') {
+    status.lastAlert = { id: n.id, kind: n.kind, title: n.title, body: n.message, url: n.click, at: new Date().toISOString() };
+  }
 }
 
 // ---------- describing changes ----------
