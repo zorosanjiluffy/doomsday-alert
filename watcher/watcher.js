@@ -328,6 +328,7 @@ function refreshStatus(sessions, dates, formats) {
 // ---------- main check ----------
 
 let consecutiveFailures = 0;
+let testMeLog = [];
 let failureAlertSent = false;
 
 async function check() {
@@ -490,6 +491,49 @@ function startServer() {
           if (r.failureCount) throw new Error(r.errors[0]?.error?.message || 'subscribe failed');
           status.webSubscribers = (status.webSubscribers || 0) + 1;
           log('Web app subscribed to alerts');
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end('{"ok":true}');
+        } catch (e) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ ok: false, error: e.message }));
+        }
+      }
+      if (url.pathname === '/test-me') {
+        // A friend's web app asks for a test alert to its own token only (rate-limited).
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204);
+          return res.end();
+        }
+        let body = '';
+        for await (const chunk of req) {
+          body += chunk;
+          if (body.length > 4096) break;
+        }
+        try {
+          const token = JSON.parse(body).token;
+          const m = getFcm();
+          if (typeof token !== 'string' || token.length < 20 || token.length > 1024 || !m) throw new Error('bad request');
+          const now = Date.now();
+          testMeLog = testMeLog.filter((e) => now - e.at < 60_000);
+          if (testMeLog.length >= 30 || testMeLog.some((e) => e.token === token)) throw new Error('Wait a minute before testing again');
+          testMeLog.push({ token, at: now });
+          await m.send({
+            token,
+            webpush: {
+              headers: { Urgency: 'high', TTL: '600' },
+              notification: {
+                title: '🚨 TEST: Doomsday tickets just dropped!',
+                body: 'This is your test alert. If you saw and heard this, your iPhone is ready.',
+                icon: `${config.webAppUrl}icon-192.png`,
+                tag: 'doomsday-test',
+                requireInteraction: true,
+              },
+              fcmOptions: { link: config.webAppUrl },
+            },
+          });
+          log('Sent a personal test alert to one web app');
           res.writeHead(200, { 'Content-Type': 'application/json' });
           return res.end('{"ok":true}');
         } catch (e) {
