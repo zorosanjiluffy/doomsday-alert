@@ -273,7 +273,7 @@ private val Amber = Color(0xFFEF9F27)
  * appears once every step is done. Each step opens Android's own permission popup or setting.
  */
 @Composable
-fun SetupScreen(steps: List<SetupStep>, onChanged: () -> Unit) {
+fun SetupScreen(steps: List<SetupStep>, review: Boolean = false, onClose: () -> Unit = {}, onChanged: () -> Unit) {
     val ctx = LocalContext.current
     val activity = ctx as? Activity
     val prefs = remember { ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE) }
@@ -354,10 +354,10 @@ fun SetupScreen(steps: List<SetupStep>, onChanged: () -> Unit) {
     // Pop the first permission dialog straight away on first launch.
     LaunchedEffect(Unit) {
         val first = steps.firstOrNull { !it.done }
-        if (first?.key == "notif" && prefs.getInt("notifAsks", 0) == 0) act(first)
+        if (!review && first?.key == "notif" && prefs.getInt("notifAsks", 0) == 0) act(first)
     }
 
-    BackHandler { activity?.finish() }
+    BackHandler { if (review) onClose() else activity?.finish() }
 
     val current = steps.indexOfFirst { !it.done }
     val doneCount = steps.count { it.done }
@@ -371,7 +371,7 @@ fun SetupScreen(steps: List<SetupStep>, onChanged: () -> Unit) {
             .padding(horizontal = 22.dp, vertical = 24.dp),
     ) {
         Text(
-            if (current >= 0) "Step ${current + 1} of ${steps.size} · $doneCount done" else "All set",
+            if (review) "Setup guide · $doneCount of ${steps.size} done" else if (current >= 0) "Step ${current + 1} of ${steps.size} · $doneCount done" else "All set",
             color = GreenBright,
             fontSize = 13.sp,
         )
@@ -379,7 +379,7 @@ fun SetupScreen(steps: List<SetupStep>, onChanged: () -> Unit) {
         Text("Arm the Doomsday alarm", color = Text1, fontSize = 26.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(8.dp))
         Text(
-            "These are required. Without them your phone can't ring when tickets open, so the app stays locked until they're done.",
+            if (review) "Everything your phone needs for the alarm. Check any step again, or redo it if you changed a setting." else "These are required. Without them your phone can't ring when tickets open, so the app stays locked until they're done.",
             color = Text2, fontSize = 14.sp, lineHeight = 20.sp,
         )
         Spacer(Modifier.height(22.dp))
@@ -420,7 +420,7 @@ fun SetupScreen(steps: List<SetupStep>, onChanged: () -> Unit) {
                         fontWeight = FontWeight.Bold,
                     )
                 }
-                if (!s.done && active) {
+                if (review || (!s.done && active)) {
                     Spacer(Modifier.height(8.dp))
                     Text(s.why, color = Text2, fontSize = 14.sp, lineHeight = 20.sp)
                     if (s.key == "lock") {
@@ -445,6 +445,10 @@ fun SetupScreen(steps: List<SetupStep>, onChanged: () -> Unit) {
             }
         }
 
+        if (review) {
+            Spacer(Modifier.height(16.dp))
+            BigButton("Done", Green) { onClose() }
+        }
         Spacer(Modifier.height(18.dp))
         Text(
             "Your choices stay on your phone. The app only receives ticket alerts.",

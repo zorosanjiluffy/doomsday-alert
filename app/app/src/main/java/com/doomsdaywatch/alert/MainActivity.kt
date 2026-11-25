@@ -108,12 +108,17 @@ private fun DoomRoot() {
     }
     val steps = remember(tick) { requiredSteps(ctx) }
     val ready = steps.all { it.done }
+    var guide by remember { mutableStateOf(false) }
     LaunchedEffect(ready) { if (ready) Guard.start(ctx.applicationContext) }
-    if (ready) HomeScreen() else SetupScreen(steps) { tick++ }
+    when {
+        ready && !guide -> HomeScreen(onGuide = { guide = true })
+        ready -> SetupScreen(steps, review = true, onClose = { guide = false }) { tick++ }
+        else -> SetupScreen(steps) { tick++ }
+    }
 }
 
 @Composable
-private fun HomeScreen() {
+private fun HomeScreen(onGuide: () -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -170,7 +175,20 @@ private fun HomeScreen() {
             .padding(horizontal = 20.dp, vertical = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        StatusPill(status, pushOn = DoomApp.pushConfigured && AlertStore.isSubscribed(ctx))
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            StatusPill(status, pushOn = DoomApp.pushConfigured && AlertStore.isSubscribed(ctx))
+            // Small button to reopen the setup instructions any time.
+            Box(
+                Modifier
+                    .align(Alignment.CenterEnd)
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .background(Black.copy(alpha = 0.6f))
+                    .border(1.dp, Color(0xFF0F6E56), CircleShape)
+                    .clickable(onClick = onGuide),
+                contentAlignment = Alignment.Center,
+            ) { Text("⚙", color = GreenBright, fontSize = 16.sp) }
+        }
 
         // The art shows through here; tap to jump to the next scene.
         Box(
@@ -211,6 +229,9 @@ private fun HomeScreen() {
         )
         Spacer(Modifier.height(4.dp))
         Text(statusLine(status, now), color = Muted, fontSize = 12.sp, textAlign = TextAlign.Center)
+
+        Spacer(Modifier.height(16.dp))
+        ShowsSection()
 
         if (last != null) {
             Spacer(Modifier.height(16.dp))

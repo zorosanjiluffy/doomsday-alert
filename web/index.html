@@ -98,6 +98,36 @@
     .green { background: var(--green); color: var(--black); }
     .step .note { color: var(--muted); font-size: 12px; margin-top: 8px; }
     .setup .err { text-align: left; }
+
+    /* Shows list */
+    .showsCard { width: 100%; margin-top: 18px; border: 1px solid #22302B; background: #0E1513; border-radius: 16px; padding: 14px; text-align: left; }
+    .showsHead { display: flex; align-items: center; justify-content: space-between; }
+    .showsHead h2 { font-size: 17px; margin: 0; }
+    .showsHead select { background: transparent; color: var(--green-bright); border: 1px solid var(--green); border-radius: 10px; padding: 7px 10px; font: inherit; font-weight: 700; }
+    .newBanner { display: flex; gap: 10px; align-items: center; width: 100%; margin-top: 12px; padding: 12px; border-radius: 12px; border: 1px solid var(--amber); background: #2A1C06; color: var(--amber); text-align: left; font: inherit; cursor: pointer; }
+    .newBanner small { color: var(--text2); font-size: 12px; }
+    .newBanner .ico { font-size: 18px; }
+    .chips { display: flex; gap: 8px; overflow-x: auto; margin: 12px 0 4px; padding-bottom: 2px; }
+    .chip { flex: none; border: 1px solid #22302B; background: transparent; color: var(--text2); border-radius: 20px; padding: 6px 12px; font: inherit; font-size: 13px; }
+    .chip.on { background: var(--green-bright); border-color: var(--green-bright); color: var(--black); font-weight: 700; }
+    .cinema { border: 1px solid #22302B; border-radius: 12px; padding: 12px; margin-top: 10px; }
+    .cinema.new { border-color: var(--amber); }
+    .cname { display: flex; justify-content: space-between; gap: 8px; font-weight: 700; font-size: 14px; }
+    .cname em { font-style: normal; background: var(--amber); color: var(--black); font-size: 11px; border-radius: 6px; padding: 2px 6px; height: fit-content; }
+    .screens { color: var(--muted); font-size: 11px; }
+    .times { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+    .time { text-decoration: none; font-weight: 700; font-size: 13px; padding: 6px 10px; border-radius: 8px; border: 1px solid; }
+    .time.ok { color: var(--green-bright); border-color: rgba(93,202,165,.6); }
+    .time.amber { color: var(--amber); border-color: rgba(239,159,39,.6); }
+    .time.red { color: var(--red); border-color: rgba(226,75,74,.6); }
+    .time.new { border-color: var(--amber); }
+    .legend { color: var(--muted); font-size: 11px; margin-top: 10px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+    .legend i { display: inline-block; width: 8px; height: 8px; border-radius: 4px; margin-left: 6px; }
+    .legend i.ok { background: var(--green-bright); } .legend i.amber { background: var(--amber); } .legend i.red { background: var(--red); }
+    .muted { color: var(--muted); font-size: 13px; } .small { font-size: 11px; margin: 4px 0 0; }
+    .topbar { position: relative; width: 100%; display: flex; justify-content: center; }
+    .guideBtn { position: absolute; right: 0; top: 50%; transform: translateY(-50%); width: 34px; height: 34px; border-radius: 50%;
+      border: 1px solid var(--green-deep); background: rgba(7,9,10,.6); color: var(--green-bright); font-size: 16px; cursor: pointer; }
     [hidden] { display: none !important; }
 
     /* Full-screen alert (shown if a push arrives while the app is open) */
@@ -125,7 +155,10 @@
     <div class="flash" id="flash"></div>
   </div>
   <main>
-    <span id="pill" class="pill"><span class="dot"></span><span id="pillText">Loading…</span></span>
+    <div class="topbar">
+      <span id="pill" class="pill"><span class="dot"></span><span id="pillText">Loading…</span></span>
+      <button id="guideBtn" class="guideBtn" type="button" aria-label="Open the setup guide" hidden>⚙</button>
+    </div>
 
     <div id="artTap" class="art" role="button" aria-label="Show the next scene">
       <div class="dots"><i class="on"></i><i></i><i></i></div>
@@ -134,6 +167,12 @@
 
     <h1>Avengers: Doomsday · Chennai</h1>
     <div id="status" class="status">Alerts arrive the moment new theatres or dates open</div>
+
+    <div id="shows" class="showsCard">
+      <div class="showsHead"><h2>Shows</h2><select id="showLang" aria-label="Language"><option>Tamil</option></select></div>
+      <button id="newBanner" class="newBanner" type="button" hidden></button>
+      <div class="shows-body"><p class="muted">Loading shows…</p></div>
+    </div>
 
     <div id="install" class="card warn" hidden>
       <h2>Add this to your Home Screen first</h2>

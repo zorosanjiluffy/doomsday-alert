@@ -254,31 +254,33 @@ function setupSteps() {
   ];
 }
 
+let setupReview = false;
 function renderSetup() {
   const box = $('setup');
   if (!isIOS || !pushConfigured) { box.hidden = true; return; }
   const steps = setupSteps();
   const current = steps.findIndex((s) => !s.done);
-  if (current < 0) { box.hidden = true; renderAlerts(); return; }
+  if (current < 0 && !setupReview) { box.hidden = true; renderAlerts(); return; }
   box.hidden = false;
   const done = steps.filter((s) => s.done).length;
   box.innerHTML = `<div class="wrap">
-    <div class="kicker">Step ${current + 1} of ${steps.length} · ${done} done</div>
+    <div class="kicker">${setupReview ? `Setup guide · ${done} of ${steps.length} done` : `Step ${current + 1} of ${steps.length} · ${done} done`}</div>
     <h2>Arm the Doomsday alarm</h2>
-    <p class="lead">These are required. Without them your iPhone can't alert you when tickets open, so the app stays on this screen until they're done.</p>
+    <p class="lead">${setupReview ? 'Everything your iPhone needs for alerts. Check any step again, or redo it if you changed a setting.' : 'These are required. Without them your iPhone can\'t alert you when tickets open, so the app stays on this screen until they\'re done.'}</p>
     ${steps.map((s, i) => `
       <div class="step ${s.done ? 'done' : i === current ? 'active' : ''}">
         <div class="head"><span class="num">${s.done ? '✓' : i + 1}</span>${s.title}</div>
-        ${i === current ? `<div class="body">${s.body}</div>
-          ${s.button && !(s.key === 'home') ? `<button class="btn ${s.button[1]}" data-act="main" type="button">${s.button[0]}</button>` : ''}
-          ${s.extra ? `<button class="btn ${s.extra[1]}" data-act="extra" type="button">${s.extra[0]}</button>` : ''}
+        ${(setupReview || i === current) ? `<div class="body">${s.body}</div>
+          ${s.button && !(s.key === 'home') ? `<button class="btn ${s.button[1]}" data-act="main" data-i="${i}" type="button">${s.button[0]}</button>` : ''}
+          ${s.extra ? `<button class="btn ${s.extra[1]}" data-act="extra" data-i="${i}" type="button">${s.extra[0]}</button>` : ''}
           ${s.note ? `<div class="note">${s.note}</div>` : ''}
-          <div class="err" id="setupErr"></div>` : ''}
+          ${i === current || (setupReview && s.key === 'test') ? '<div class="err" id="setupErr"></div>' : ''}` : ''}
       </div>`).join('')}
+    ${setupReview ? '<button class="btn green" data-act="close" type="button">Done</button>' : ''}
   </div>`;
-  const s = steps[current];
-  box.querySelector('[data-act="main"]')?.addEventListener('click', s.button?.[2]);
-  box.querySelector('[data-act="extra"]')?.addEventListener('click', s.extra?.[2]);
+  box.querySelectorAll('[data-act="main"]').forEach((b) => b.addEventListener('click', steps[+b.dataset.i].button[2]));
+  box.querySelectorAll('[data-act="extra"]').forEach((b) => b.addEventListener('click', steps[+b.dataset.i].extra[2]));
+  box.querySelector('[data-act="close"]')?.addEventListener('click', () => { setupReview = false; renderSetup(); });
 }
 
 async function sendTestToMe(fromSetup) {
@@ -302,3 +304,83 @@ async function sendTestToMe(fromSetup) {
 $('testMe').addEventListener('click', () => sendTestToMe(false));
 renderSetup();
 document.addEventListener('visibilitychange', () => { if (!document.hidden) renderSetup(); });
+
+// ---------- shows list (every show, with today's new ones highlighted) ----------
+const showsState = { data: null, lang: 'Tamil', date: null, onlyNew: false };
+const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const prettyDay = (iso) => new Date(iso + 'T00:00:00+05:30').toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' });
+const seatClass = (s) => (/sold|almost/i.test(s) ? 'red' : /fast/i.test(s) ? 'amber' : 'ok');
+
+async function loadShows() {
+  if (!cfg.watcherUrl) return;
+  try {
+    const r = await fetch(`${cfg.watcherUrl}/shows`, { cache: 'no-store' });
+    showsState.data = await r.json();
+    renderShows();
+  } catch {
+    if (!showsState.data) $('shows').querySelector('.shows-body').innerHTML = '<p class="muted">Couldn’t load shows. Retrying…</p>';
+  }
+}
+
+function renderShows() {
+  const d = showsState.data;
+  if (!d) return;
+  const langs = [...new Set(d.shows.map((s) => s.lang))].sort((a, b) => (b === 'Tamil') - (a === 'Tamil'));
+  if (!langs.includes(showsState.lang) && langs.length) showsState.lang = langs[0];
+  const sel = $('showLang');
+  sel.innerHTML = langs.map((l) => `<option value="${esc(l)}"${l === showsState.lang ? ' selected' : ''}>${esc(l)} (${d.shows.filter((s) => s.lang === l).length})</option>`).join('');
+
+  const newShows = d.shows.filter((s) => s.isNew);
+  const banner = $('newBanner');
+  banner.hidden = newShows.length === 0;
+  if (newShows.length) {
+    const split = Object.entries(newShows.reduce((m, s) => ((m[s.lang] = (m[s.lang] || 0) + 1), m), {}))
+      .sort((a, b) => b[1] - a[1]).map(([l, n]) => `${n} ${l}`).join(' · ');
+    banner.innerHTML = `<span class="ico">🆕</span><span><b>${newShows.length} new show${newShows.length > 1 ? 's' : ''} released today</b><br>
+      <small>${esc(split)} · ${showsState.onlyNew ? 'showing only new · tap to show all' : 'tap to see them'}</small></span>`;
+  }
+
+  const forLang = d.shows.filter((s) => s.lang === showsState.lang && (!showsState.onlyNew || s.isNew));
+  const dates = [...new Set(forLang.map((s) => s.date))].sort();
+  const day = dates.includes(showsState.date) ? showsState.date : dates[0];
+  const body = $('shows').querySelector('.shows-body');
+  if (!dates.length) {
+    body.innerHTML = `<p class="muted">${showsState.onlyNew ? `No new ${esc(showsState.lang)} shows today.` : `No ${esc(showsState.lang)} shows listed yet. You’ll get an alert the moment they open.`}</p>`;
+    return;
+  }
+  const chips = dates.map((dt) => `<button type="button" class="chip${dt === day ? ' on' : ''}" data-date="${dt}">${prettyDay(dt)}${forLang.some((s) => s.date === dt && s.isNew) ? ' 🆕' : ''}</button>`).join('');
+  const byCinema = {};
+  forLang.filter((s) => s.date === day).forEach((s) => (byCinema[s.cinema] ||= []).push(s));
+  const cards = Object.entries(byCinema)
+    .sort((a, b) => b[1].some((s) => s.isNew) - a[1].some((s) => s.isNew))
+    .map(([cinema, list]) => {
+      const isNew = list.some((s) => s.isNew);
+      const screens = [...new Set(list.map((s) => s.screen).filter(Boolean))].join(' · ');
+      const times = list.map((s) => `<a class="time ${seatClass(s.status)}${s.isNew ? ' new' : ''}" href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.time)}${s.isNew ? ' 🆕' : ''}</a>`).join('');
+      return `<div class="cinema${isNew ? ' new' : ''}"><div class="cname"><span>${esc(cinema)}</span>${isNew ? '<em>NEW</em>' : ''}</div>
+        ${screens ? `<div class="screens">${esc(screens)}</div>` : ''}<div class="times">${times}</div></div>`;
+    }).join('');
+  body.innerHTML = `<div class="chips">${chips}</div>${cards}
+    <div class="legend"><i class="ok"></i>Available <i class="amber"></i>Filling fast <i class="red"></i>Almost full</div>
+    <p class="muted small">Tap a time to book on District.</p>`;
+  body.querySelectorAll('.chip').forEach((b) => b.addEventListener('click', () => { showsState.date = b.dataset.date; renderShows(); }));
+}
+
+$('showLang').addEventListener('change', (e) => { showsState.lang = e.target.value; showsState.date = null; renderShows(); });
+$('newBanner').addEventListener('click', () => {
+  showsState.onlyNew = !showsState.onlyNew;
+  const d = showsState.data;
+  if (showsState.onlyNew && d && !d.shows.some((s) => s.isNew && s.lang === showsState.lang)) {
+    const counts = d.shows.filter((s) => s.isNew).reduce((m, s) => ((m[s.lang] = (m[s.lang] || 0) + 1), m), {});
+    const top = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
+    if (top) showsState.lang = top[0];
+  }
+  showsState.date = null;
+  renderShows();
+});
+loadShows();
+setInterval(loadShows, 90000);
+
+// ---------- setup guide button ----------
+$('guideBtn').hidden = !(isIOS && pushConfigured);
+$('guideBtn').addEventListener('click', () => { setupReview = true; renderSetup(); });
