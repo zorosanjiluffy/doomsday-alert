@@ -57,9 +57,10 @@ data class ShowItem(
     val status: String,
     val url: String,
     val isNew: Boolean,
+    val addedAt: String,
 )
 
-data class ShowsData(val shows: List<ShowItem>, val newToday: Int)
+data class ShowsData(val shows: List<ShowItem>, val newToday: Int, val watchingSince: String, val pollSeconds: Int)
 
 private val ShowsUrl: String get() = BuildConfig.STATUS_URL.replace(Regex("/status$"), "/shows")
 
@@ -77,9 +78,10 @@ private suspend fun fetchShows(): ShowsData? {
                 ShowItem(
                     o.optString("lang"), o.optString("date"), o.optString("cinema"), o.optString("time"),
                     o.optString("screen"), o.optString("status"), o.optString("url"), o.optBoolean("isNew"),
+                    o.optString("addedAt"),
                 )
             }
-            ShowsData(list, j.optInt("newToday"))
+            ShowsData(list, j.optInt("newToday"), j.optString("watchingSince"), j.optInt("pollSeconds", 30))
         } catch (_: Exception) {
             null
         }
@@ -279,6 +281,13 @@ fun ShowsSection() {
                 if (screens.isNotEmpty()) {
                     Text(screens.joinToString(" · "), color = Muted, fontSize = 11.sp)
                 }
+                val added = shows.filter { it.isNew && it.addedAt.isNotBlank() }
+                if (added.isNotEmpty()) {
+                    Text(
+                        "Released today: " + added.joinToString(", ") { "${it.time} (added ${it.addedAt})" },
+                        color = Amber, fontSize = 12.sp,
+                    )
+                }
                 Spacer(Modifier.height(8.dp))
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     shows.forEach { s ->
@@ -305,6 +314,12 @@ fun ShowsSection() {
         }
         Spacer(Modifier.height(4.dp))
         Text("Tap a theatre or time to book on District.", color = Muted, fontSize = 11.sp)
+        if (d.watchingSince.isNotBlank()) {
+            Text(
+                "Checked every ${d.pollSeconds}s · NEW = released today since watching began (${d.watchingSince}).",
+                color = Muted, fontSize = 11.sp,
+            )
+        }
     }
 }
 

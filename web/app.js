@@ -356,13 +356,16 @@ function renderShows() {
     .map(([cinema, list]) => {
       const isNew = list.some((s) => s.isNew);
       const screens = [...new Set(list.map((s) => s.screen).filter(Boolean))].join(' · ');
+      const added = list.filter((s) => s.isNew && s.addedAt).map((s) => `${esc(s.time)} (added ${esc(s.addedAt)})`).join(', ');
       const times = list.map((s) => `<a class="time ${seatClass(s.status)}${s.isNew ? ' new' : ''}" href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.time)}${s.isNew ? ' 🆕' : ''}</a>`).join('');
       return `<div class="cinema${isNew ? ' new' : ''}"><div class="cname"><span>${esc(cinema)}</span>${isNew ? '<em>NEW</em>' : ''}</div>
-        ${screens ? `<div class="screens">${esc(screens)}</div>` : ''}<div class="times">${times}</div></div>`;
+        ${screens ? `<div class="screens">${esc(screens)}</div>` : ''}
+        ${added ? `<div class="added">Released today: ${added}</div>` : ''}<div class="times">${times}</div></div>`;
     }).join('');
   body.innerHTML = `<div class="chips">${chips}</div>${cards}
     <div class="legend"><i class="ok"></i>Available <i class="amber"></i>Filling fast <i class="red"></i>Almost full</div>
-    <p class="muted small">Tap a time to book on District.</p>`;
+    <p class="muted small">Tap a time to book on District.</p>
+    ${d.watchingSince ? `<p class="muted small">Checked every ${d.pollSeconds || 30}s · NEW = released today since watching began (${esc(d.watchingSince)}).</p>` : ''}`;
   body.querySelectorAll('.chip').forEach((b) => b.addEventListener('click', () => { showsState.date = b.dataset.date; renderShows(); }));
 }
 
