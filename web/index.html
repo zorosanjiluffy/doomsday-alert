@@ -31,9 +31,21 @@
     .pill { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; padding: 6px 14px; border-radius: 99px; border: 1px solid var(--amber); color: var(--amber); }
     .pill .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
     .pill.ok { border-color: var(--green); color: var(--green-bright); }
-    .stage { position: relative; width: 100%; aspect-ratio: 100 / 140; margin: 6px 0 2px; }
-    .stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
-    .plate { position: absolute; left: 50%; top: 64.3%; transform: translate(-50%, -50%); text-align: center;
+    .stage { position: relative; width: 100%; aspect-ratio: 3 / 4; margin: 8px 0 6px; border-radius: 20px; overflow: hidden; background: var(--black); cursor: pointer; --tx: 0; --ty: 0; }
+    .scene { position: absolute; inset: 0; opacity: 0; transition: opacity .9s ease; }
+    .scene.active { opacity: 1; }
+    .scene img, .scene .fx { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transform: scale(1.1) translate(calc(var(--tx) * 12px), calc(var(--ty) * 12px)); }
+    .scene .fx { transform: scale(1.1) translate(calc(var(--tx) * 19px), calc(var(--ty) * 19px)); }
+    #sigil { position: absolute; left: 0; top: 18px; width: 100%; aspect-ratio: 1; transform: translate(calc(var(--tx) * 7px), calc(var(--ty) * 7px)); }
+    .flash { position: absolute; inset: 0; pointer-events: none; opacity: 0; }
+    .flash.bolt { background: #F4F9FF; animation: flash .9s ease-out; }
+    .flash.mist { background: #5DCAA5; animation: mist .9s ease-out; }
+    @keyframes flash { 0% { opacity: 0 } 15% { opacity: .6 } 100% { opacity: 0 } }
+    @keyframes mist { 0% { opacity: 0 } 40% { opacity: .35 } 100% { opacity: 0 } }
+    .dots { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); display: flex; gap: 6px; }
+    .dots i { width: 6px; height: 6px; border-radius: 6px; background: rgba(225,245,238,.4); transition: width .3s; }
+    .dots i.on { width: 18px; background: var(--text); }
+    .plate { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); text-align: center;
       background: rgba(7, 9, 10, .88); border: 1px solid var(--green-deep); border-radius: 14px; padding: 8px 14px; }
     .plate small { display: block; color: var(--green-bright); font-size: 12px; }
     .plate b { font: 700 clamp(15px, 5vw, 22px) ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; }
@@ -81,8 +93,12 @@
   <main>
     <span id="pill" class="pill"><span class="dot"></span><span id="pillText">Loading…</span></span>
 
-    <div class="stage">
-      <canvas id="sigil" aria-hidden="true"></canvas>
+    <div class="stage" id="stage" role="img" aria-label="Animated scenes: the Doom sigil, Thor's lightning, Loki and the timelines. Tap to switch.">
+      <div class="scene active"><canvas id="sigil" aria-hidden="true"></canvas></div>
+      <div class="scene"><img src="scene_thor.jpg" alt="" /><canvas class="fx" id="fx-thor"></canvas></div>
+      <div class="scene"><img src="scene_loki.jpg" alt="" /><canvas class="fx" id="fx-loki"></canvas></div>
+      <div class="flash" id="flash"></div>
+      <div class="dots"><i class="on"></i><i></i><i></i></div>
       <div class="plate"><small id="cdLabel">Doom arrives in</small><b id="countdown">--d --h --m --s</b></div>
     </div>
 
@@ -130,6 +146,7 @@
 
   <script src="config.js"></script>
   <script src="sigil.js"></script>
+  <script src="scenes.js"></script>
   <script type="module" src="app.js"></script>
 </body>
 </html>

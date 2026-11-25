@@ -1,30 +1,55 @@
 package com.doomsdaywatch.alert
 
+import android.content.Context
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
+import androidx.annotation.DrawableRes
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.unit.dp
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.max
@@ -32,25 +57,20 @@ import kotlin.math.sin
 import kotlin.random.Random
 
 /*
- * The home-screen scene: the god of mischief on his throne at the top, holding the glowing
- * timelines that wind down around the Doom sigil, while the thunderer's lightning strikes.
- * Everything is drawn in code: an original fan-made design, no studio artwork.
- *
- * Layout uses a 100 x 140 unit box (u = width / 100). The sigil sits in the bottom square
- * (centre 50,90, radius 46); the throne rests on its rim at the top.
+ * Home-screen scenes, cycling: the Doom sigil, then Thor, then Loki (~8 s each; tap to skip).
+ * Thor and Loki are the user's pictures brought to life with effects drawn on top
+ * (crackling lightning, glowing strands, mist, debris) and tilt-to-move depth.
  */
 
-private val GoldDeep = Color(0xFF854F0B)
-private val Gold = Color(0xFFEF9F27)
-private val GoldLight = Color(0xFFFAC775)
-private val ThroneFill = Color(0xFF0C1210)
-private val Cape = Color(0xFF0B2A20)
-private val CapeEdge = Color(0xFF1D9E75)
+private const val SCENE_S = 8f
+private const val FADE_S = 0.9f
+private const val BOX_ASPECT = 0.75f // width / height of the scene area
+
 private val BoltGlow = Color(0xFF378ADD)
 private val BoltMid = Color(0xFF85B7EB)
 private val BoltCore = Color(0xFFF4F9FF)
-
-private data class Bolt(val main: List<Offset>, val forks: List<List<Offset>>, val born: Float, val target: Offset)
+private val LokiGlow = Color(0xFFC0DD97)
+private val LokiMist = Color(0xFF5DCAA5)
 
 @Composable
 fun DoomScene(
@@ -58,14 +78,21 @@ fun DoomScene(
     colors: SigilColors,
     speed: Float,
     pulseKey: Any?,
-    center: @Composable BoxScope.() -> Unit,
+    overlay: @Composable BoxScope.() -> Unit,
 ) {
     var time by remember { mutableFloatStateOf(0f) }
-    var bolts by remember { mutableStateOf(listOf<Bolt>()) }
-    var nextBolt by remember { mutableFloatStateOf(1.2f) }
-    var strikeRequest by remember { mutableStateOf(0) }
-    val rnd = remember { Random(System.nanoTime()) }
-    var widthPx by remember { mutableFloatStateOf(0f) }
+    var index by remember { mutableIntStateOf(0) }
+    var prev by remember { mutableIntStateOf(0) }
+    var switchedAt by remember { mutableFloatStateOf(-10f) }
+    var nextSwitch by remember { mutableFloatStateOf(SCENE_S) }
+    val tilt = rememberTilt()
+
+    fun advance() {
+        prev = index
+        index = (index + 1) % 3
+        switchedAt = time
+        nextSwitch = time + SCENE_S
+    }
 
     LaunchedEffect(Unit) {
         var last = 0L
@@ -74,192 +101,281 @@ fun DoomScene(
                 if (last != 0L) time += (now - last) / 1_000_000_000f
                 last = now
             }
-            val u = widthPx / 100f
-            if (u > 0f && (time >= nextBolt || strikeRequest > 0)) {
-                strikeRequest = 0
-                bolts = (bolts.filter { time - it.born < 0.9f } + makeBolt(u, rnd, time)).takeLast(3)
-                nextBolt = time + 2.5f + rnd.nextFloat() * 4f
-            }
+            if (time >= nextSwitch) advance()
         }
     }
-    LaunchedEffect(pulseKey) { if (pulseKey != null) strikeRequest++ }
 
+    val fade = ((time - switchedAt) / FADE_S).coerceIn(0f, 1f)
     Box(
         modifier
             .fillMaxWidth()
-            .aspectRatio(100f / 140f)
-            .onSizeChanged { widthPx = it.width.toFloat() },
+            .aspectRatio(BOX_ASPECT)
+            .clip(RoundedCornerShape(20.dp))
+            .background(Color(0xFF07090A))
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { advance() },
     ) {
-        // Back layer: throne, figure, timelines.
-        Canvas(Modifier.fillMaxSize()) {
-            val u = size.width / 100f
-            timelines(u, time * speed, colors)
-            throne(u, time)
+        if (fade < 1f && prev != index) SceneLayer(prev, 1f - fade, time, colors, speed, pulseKey, tilt.value)
+        SceneLayer(index, fade, time, colors, speed, pulseKey, tilt.value)
+
+        // Transition flavour: a lightning flash into Thor, a wash of green mist into Loki.
+        if (fade < 1f) {
+            Canvas(Modifier.fillMaxSize()) {
+                val k = sin(fade * PI.toFloat())
+                when (index) {
+                    1 -> drawRect(BoltCore.copy(alpha = 0.55f * k))
+                    2 -> drawRect(LokiMist.copy(alpha = 0.35f * k))
+                }
+            }
         }
-        // The sigil in the bottom square, countdown plate on top of it.
-        Box(
+
+        // Which scene is showing.
+        Row(
+            Modifier.align(Alignment.TopCenter).padding(top = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            repeat(3) { i ->
+                Box(
+                    Modifier
+                        .size(if (i == index) 18.dp else 6.dp, 6.dp)
+                        .clip(CircleShape)
+                        .background(if (i == index) Color(0xFFE1F5EE) else Color(0x66E1F5EE)),
+                )
+            }
+        }
+        overlay()
+    }
+}
+
+@Composable
+private fun BoxScope.SceneLayer(
+    which: Int,
+    alpha: Float,
+    time: Float,
+    colors: SigilColors,
+    speed: Float,
+    pulseKey: Any?,
+    tilt: Offset,
+) {
+    val maxShift = with(LocalDensity.current) { 14.dp.toPx() }
+    // Tilt, plus a slow drift so it breathes even when the phone is still.
+    val drift = Offset(sin(time * 0.25f) * 0.25f, sin(time * 0.19f + 1f) * 0.2f)
+    val t = Offset((tilt.x + drift.x).coerceIn(-1f, 1f), (tilt.y + drift.y).coerceIn(-1f, 1f))
+    when (which) {
+        0 -> Box(
             Modifier
                 .fillMaxWidth()
                 .aspectRatio(1f)
-                .align(Alignment.BottomCenter),
-            contentAlignment = Alignment.Center,
-        ) {
-            DoomSigil(Modifier.fillMaxSize(), colors, speed, pulseKey)
-            center()
+                .align(Alignment.TopCenter)
+                .padding(top = 18.dp)
+                .graphicsLayer {
+                    this.alpha = alpha
+                    translationX = t.x * maxShift * 0.5f
+                    translationY = t.y * maxShift * 0.5f
+                },
+        ) { DoomSigil(Modifier.fillMaxSize(), colors, speed, pulseKey) }
+
+        1 -> PictureScene(R.drawable.scene_thor, 736f / 1308f, alpha, t, maxShift) { m, w, h, u ->
+            thorEffects(time, m, w, h, u)
         }
-        // Front layer: lightning.
-        Canvas(Modifier.fillMaxSize()) {
-            val u = size.width / 100f
-            bolts.forEach { drawBolt(it, time, u) }
+
+        else -> PictureScene(R.drawable.scene_loki, 900f / 1592f, alpha, t, maxShift) { m, w, h, u ->
+            lokiEffects(time, m, w, h, u)
         }
     }
 }
 
-// ---------------- throne + figure ----------------
-
-private fun DrawScope.p(u: Float, x: Float, y: Float) = Offset(x * u, y * u)
-
-private fun DrawScope.throne(u: Float, t: Float) {
-    // Throne back with Asgardian spires.
-    val back = Path().apply {
-        val pts = listOf(
-            30f to 44f, 30f to 16f, 33f to 9f, 36f to 15f, 40f to 6f, 44f to 13f, 50f to 0.5f,
-            56f to 13f, 60f to 6f, 64f to 15f, 67f to 9f, 70f to 16f, 70f to 44f,
+/**
+ * A picture with an effects layer in the same image coordinates. The picture moves with tilt;
+ * the effects move further, which reads as depth.
+ */
+@Composable
+private fun PictureScene(
+    @DrawableRes res: Int,
+    aspect: Float,
+    alpha: Float,
+    tilt: Offset,
+    maxShift: Float,
+    effects: DrawScope.(ImgMap, Float, Float, Float) -> Unit,
+) {
+    Box(Modifier.fillMaxSize().graphicsLayer { this.alpha = alpha }) {
+        Image(
+            painter = painterResource(res),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    scaleX = 1.1f
+                    scaleY = 1.1f
+                    translationX = tilt.x * maxShift
+                    translationY = tilt.y * maxShift
+                },
         )
-        pts.forEachIndexed { i, (x, y) -> if (i == 0) moveTo(x * u, y * u) else lineTo(x * u, y * u) }
-        close()
-    }
-    drawPath(back, ThroneFill, style = Fill)
-    drawPath(back, GoldDeep, style = Stroke(0.5f * u, join = StrokeJoin.Round))
-    // Inner inlay lines.
-    for (x in listOf(40f, 50f, 60f)) drawLine(GoldDeep.copy(alpha = 0.6f), p(u, x, 16f), p(u, x, 40f), 0.3f * u)
-
-    // Armrests.
-    for (side in listOf(-1f, 1f)) {
-        val x0 = 50f + side * 20f
-        val arm = Path().apply {
-            moveTo((x0 - 4f) * u, 34f * u); lineTo((x0 + 4f) * u, 34f * u)
-            lineTo((x0 + 3f) * u, 44f * u); lineTo((x0 - 3f) * u, 44f * u); close()
+        Canvas(
+            Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    scaleX = 1.1f
+                    scaleY = 1.1f
+                    translationX = tilt.x * maxShift * 1.6f
+                    translationY = tilt.y * maxShift * 1.6f
+                },
+        ) {
+            effects(ImgMap(size.width, size.height, aspect), size.width, size.height, size.width / 100f)
         }
-        drawPath(arm, ThroneFill)
-        drawPath(arm, GoldDeep, style = Stroke(0.4f * u))
+    }
+}
+
+/** Maps picture fractions (0..1) to canvas pixels, matching ContentScale.Crop's centring. */
+private class ImgMap(w: Float, h: Float, aspect: Float) {
+    private val drawnH = max(w / aspect, h)
+    private val drawnW = drawnH * aspect
+    private val ox = (w - drawnW) / 2f
+    private val oy = (h - drawnH) / 2f
+    operator fun invoke(fx: Float, fy: Float) = Offset(ox + fx * drawnW, oy + fy * drawnH)
+}
+
+// ---------------- Thor ----------------
+
+private fun DrawScope.thorEffects(t: Float, p: ImgMap, w: Float, h: Float, u: Float) {
+    val fist = p(0.51f, 0.545f)
+    val sky = p(0.53f, -0.05f)
+    val surge = 0.5f + 0.5f * sin(t * 9f) * sin(t * 2.3f)
+
+    // The air glows with each surge.
+    drawRect(BoltMid.copy(alpha = 0.05f + 0.08f * surge))
+
+    // The bolt re-forms ~12 times a second, so it crackles like live current.
+    val seed = (t * 12f).toInt()
+    val rnd = Random(seed)
+    val main = mutableListOf(sky)
+    displace(sky, fist, 7, 0.18f, rnd, main)
+    drawBoltPath(main, u, 1.2f, 0.75f + 0.25f * surge)
+    repeat(3) {
+        val from = main[rnd.nextInt(main.size / 5, main.size - 3)]
+        val end = from + Offset((rnd.nextFloat() - 0.5f) * 28f * u, rnd.nextFloat() * 10f * u)
+        val f = mutableListOf(from)
+        displace(from, end, 4, 0.45f, rnd, f)
+        drawBoltPath(f, u, 0.5f, 0.6f)
     }
 
-    // Cape flaring out behind the arms.
-    val capeBack = Path().apply {
-        moveTo(45f * u, 23f * u)
-        cubicTo(38f * u, 26f * u, 31f * u, 34f * u, 27f * u, 45f * u)
-        lineTo(73f * u, 45f * u)
-        cubicTo(69f * u, 34f * u, 62f * u, 26f * u, 55f * u, 23f * u)
-        close()
-    }
-    drawPath(capeBack, Color(0xFF07170F))
-    drawPath(capeBack, CapeEdge.copy(alpha = 0.35f), style = Stroke(0.3f * u))
-
-    // Cape / seated body.
-    val body = Path().apply {
-        moveTo(44.5f * u, 22.5f * u)
-        quadraticTo(50f * u, 20.5f * u, 55.5f * u, 22.5f * u)
-        lineTo(61f * u, 44f * u)
-        quadraticTo(50f * u, 46f * u, 39f * u, 44f * u)
-        close()
-    }
-    drawPath(body, Cape)
-    drawPath(body, CapeEdge.copy(alpha = 0.8f), style = Stroke(0.45f * u, join = StrokeJoin.Round))
-    // Collar.
-    drawLine(Gold, p(u, 46f, 23f), p(u, 54f, 23f), 0.6f * u, StrokeCap.Round)
-
-    // Arms reaching out to hold the timelines.
-    val sway = sin(t * 0.8f) * 0.6f
-    val lh = p(u, 33f, 27f + sway)
-    val rh = p(u, 67f, 27f - sway)
-    drawLine(Cape, p(u, 45f, 24f), lh, 2.2f * u, StrokeCap.Round)
-    drawLine(Cape, p(u, 55f, 24f), rh, 2.2f * u, StrokeCap.Round)
-    drawLine(CapeEdge.copy(alpha = 0.5f), p(u, 45f, 24f), lh, 0.35f * u, StrokeCap.Round)
-    drawLine(CapeEdge.copy(alpha = 0.5f), p(u, 55f, 24f), rh, 0.35f * u, StrokeCap.Round)
-    val glow = 0.6f + 0.4f * sin(t * 3f)
-    for (h in listOf(lh, rh)) {
-        drawCircle(GoldLight.copy(alpha = 0.25f * glow), 3.2f * u, h)
-        drawCircle(GoldLight, 1.1f * u, h)
+    // Arcs leaping off the fist.
+    repeat(4) { i ->
+        val r2 = Random(seed * 7 + i)
+        val ang = r2.nextFloat() * 2f * PI.toFloat()
+        val end = fist + Offset(cos(ang), sin(ang)) * ((6f + r2.nextFloat() * 9f) * u)
+        val arc = mutableListOf(fist)
+        displace(fist, end, 3, 0.5f, r2, arc)
+        drawBoltPath(arc, u, 0.35f, 0.7f)
     }
 
-    // Head and the great curved horns.
-    val helm = Path().apply {
-        moveTo(46.6f * u, 16.2f * u)
-        quadraticTo(50f * u, 13.4f * u, 53.4f * u, 16.2f * u)
-        lineTo(53.2f * u, 19.6f * u)
-        lineTo(50f * u, 22.6f * u)
-        lineTo(46.8f * u, 19.6f * u)
-        close()
-    }
-    drawPath(helm, Color(0xFF101614))
-    drawPath(helm, GoldDeep, style = Stroke(0.3f * u, join = StrokeJoin.Round))
-    for (side in listOf(-1f, 1f)) {
-        val horn = Path().apply {
-            moveTo((50f + side * 1.5f) * u, 15.6f * u)
-            cubicTo((50f + side * 4f) * u, 10f * u, (50f + side * 7.5f) * u, 5f * u, (50f + side * 12.5f) * u, 1.5f * u)
-            cubicTo((50f + side * 8.5f) * u, 6.5f * u, (50f + side * 5.5f) * u, 11f * u, (50f + side * 3.4f) * u, 16.4f * u)
+    // Fist glow.
+    val glowR = (9f + 4f * surge) * u
+    drawCircle(
+        Brush.radialGradient(listOf(BoltCore.copy(alpha = 0.95f), BoltMid.copy(alpha = 0.45f), Color.Transparent), fist, glowR),
+        glowR, fist,
+    )
+
+    // Rock shards tumbling up through the storm.
+    for (i in 0 until 14) {
+        val sp = 0.03f + (i % 5) * 0.008f
+        val ph = (t * sp + i * 0.137f) % 1f
+        val x = w * ((i * 0.618f) % 1f) + sin(t * 0.6f + i) * 6f * u
+        val y = h * (0.92f - ph * 0.75f)
+        val sz = (0.8f + (i % 3) * 0.5f) * u
+        val rot = t * (0.6f + (i % 4) * 0.3f) + i
+        val a = sin(ph * PI.toFloat()) * 0.9f
+        val shard = Path().apply {
+            for (v in 0 until 3) {
+                val ang = rot + v * 2.1f + (i % 2) * 0.4f
+                val r = sz * (if (v == 0) 1.6f else 1f)
+                val pt = Offset(x + cos(ang) * r, y + sin(ang) * r)
+                if (v == 0) moveTo(pt.x, pt.y) else lineTo(pt.x, pt.y)
+            }
             close()
         }
-        drawPath(horn, Gold)
-        drawPath(horn, GoldDeep, style = Stroke(0.3f * u))
+        drawPath(shard, Color(0xFF06101E).copy(alpha = a))
+        drawPath(shard, BoltMid.copy(alpha = a * 0.55f), style = Stroke(0.2f * u))
     }
-    // Crown band and eyes.
-    drawLine(Gold, p(u, 47f, 16.4f), p(u, 53f, 16.4f), 0.8f * u, StrokeCap.Round)
-    val blink = if ((t % 5f) > 4.85f) 0.1f else 1f
-    drawCircle(Color(0xFF9FE1CB).copy(alpha = blink), 0.45f * u, p(u, 48.7f, 18.4f))
-    drawCircle(Color(0xFF9FE1CB).copy(alpha = blink), 0.45f * u, p(u, 51.3f, 18.4f))
 }
 
-// ---------------- timelines ----------------
+private fun DrawScope.drawBoltPath(pts: List<Offset>, u: Float, scale: Float, a: Float) {
+    val path = Path().apply { pts.forEachIndexed { i, o -> if (i == 0) moveTo(o.x, o.y) else lineTo(o.x, o.y) } }
+    drawPath(path, BoltGlow.copy(alpha = 0.35f * a), style = Stroke(5f * u * scale, cap = StrokeCap.Round, join = StrokeJoin.Round))
+    drawPath(path, BoltMid.copy(alpha = 0.8f * a), style = Stroke(1.8f * u * scale, cap = StrokeCap.Round, join = StrokeJoin.Round))
+    drawPath(path, BoltCore.copy(alpha = a), style = Stroke(0.7f * u * scale, cap = StrokeCap.Round, join = StrokeJoin.Round))
+}
 
-private fun bez(p0: Offset, p1: Offset, p2: Offset, p3: Offset, s: Float): Offset {
+// ---------------- Loki ----------------
+
+private fun bez(p0: Offset, p1: Offset, p2: Offset, s: Float): Offset {
     val m = 1 - s
-    return p0 * (m * m * m) + p1 * (3 * m * m * s) + p2 * (3 * m * s * s) + p3 * (s * s * s)
+    return p0 * (m * m) + p1 * (2 * m * s) + p2 * (s * s)
 }
 
-private fun DrawScope.timelines(u: Float, t: Float, colors: SigilColors) {
-    for (side in listOf(-1f, 1f)) {
-        val hand = Offset((50f + side * 17f) * u, 27f * u)
-        for (k in 0 until 5) {
-            val w = sin(t * 0.7f + k * 1.3f + side) * 2.2f
-            val p1 = Offset((50f + side * (30f + k * 3.5f) + w) * u, (12f - k * 2.5f) * u)
-            val p2 = Offset((50f + side * (60f + k * 2.5f)) * u, (80f + k * 7f + w) * u)
-            val p3 = Offset((50f + side * (5f + k * 4.5f)) * u, (139f - k * 1.2f) * u)
-            val gold = (k + if (side > 0) 1 else 0) % 2 == 0
-            val col = if (gold) Gold else colors.bright
-            val path = Path().apply {
-                moveTo(hand.x, hand.y)
-                cubicTo(p1.x, p1.y, p2.x, p2.y, p3.x, p3.y)
-            }
-            drawPath(path, col.copy(alpha = 0.09f), style = Stroke(1.5f * u, cap = StrokeCap.Round))
-            drawPath(path, col.copy(alpha = 0.6f), style = Stroke((0.22f + 0.05f * k) * u, cap = StrokeCap.Round))
+private fun DrawScope.lokiEffects(t: Float, p: ImgMap, w: Float, h: Float, u: Float) {
+    // Drifting green mist.
+    for (i in 0 until 7) {
+        val cx = w * (((i * 0.31f) + t * 0.012f * (1 + i % 3)) % 1.2f - 0.1f)
+        val cy = h * (0.2f + (i * 0.17f) % 0.75f) + sin(t * 0.3f + i) * 8f * u
+        val r = (22f + (i % 3) * 10f) * u
+        drawCircle(Brush.radialGradient(listOf(LokiMist.copy(alpha = 0.16f), Color.Transparent), Offset(cx, cy), r), r, Offset(cx, cy))
+    }
 
-            // A branching timeline splitting off.
-            if (k % 2 == 1) {
-                val s0 = 0.45f + 0.05f * k
-                val b0 = bez(hand, p1, p2, p3, s0)
-                val bEnd = Offset(b0.x + side * (10f + k * 2f) * u, b0.y + (16f + sin(t + k) * 3f) * u)
-                val branch = Path().apply {
-                    moveTo(b0.x, b0.y)
-                    quadraticTo(b0.x + side * 9f * u, b0.y + 2f * u, bEnd.x, bEnd.y)
-                }
-                drawPath(branch, col.copy(alpha = 0.5f), style = Stroke(0.3f * u, cap = StrokeCap.Round))
-                drawCircle(col.copy(alpha = 0.8f), 0.5f * u, bEnd)
-            }
-
-            // Sparks flowing down the timeline.
-            for (j in 0 until 3) {
-                val s = ((t * (0.06f + k * 0.01f) + j / 3f + k * 0.17f) % 1f)
-                val pt = bez(hand, p1, p2, p3, s)
-                val a = sin(s * PI.toFloat())
-                drawCircle(GoldLight.copy(alpha = 0.9f * a), (0.55f + 0.25f * a) * u, pt)
+    val lh = p(0.32f, 0.505f)
+    val rh = p(0.735f, 0.51f)
+    val head = p(0.52f, 0.39f)
+    // The timeline strands: from each hand out to the edges, and from the head up.
+    val strands = buildList {
+        for (k in 0 until 4) {
+            add(Triple(lh, p(0.10f - k * 0.02f, 0.40f - k * 0.03f), p(-0.02f, 0.27f + k * 0.04f)))
+            add(Triple(lh, p(0.16f - k * 0.02f, 0.66f + k * 0.03f), p(-0.02f, 0.78f + k * 0.04f)))
+            add(Triple(rh, p(0.90f + k * 0.02f, 0.40f - k * 0.03f), p(1.02f, 0.30f + k * 0.04f)))
+            add(Triple(rh, p(0.86f + k * 0.02f, 0.66f + k * 0.03f), p(1.02f, 0.76f + k * 0.04f)))
+        }
+        for (k in 0 until 6) add(Triple(head, p(0.40f + k * 0.04f, 0.20f), p(0.30f + k * 0.09f, -0.02f)))
+    }
+    strands.forEachIndexed { i, (a, c, b) ->
+        // Streaks of energy racing along each strand.
+        for (j in 0 until 2) {
+            val s = ((t * (0.22f + (i % 5) * 0.04f) + j * 0.5f + i * 0.21f) % 1f)
+            val k = sin(s * PI.toFloat())
+            var prevPt = bez(a, c, b, max(0f, s - 0.07f))
+            for (q in 1..6) {
+                val sq = max(0f, s - 0.07f + q * (0.07f / 6f))
+                val pt = bez(a, c, b, sq)
+                val f = q / 6f
+                drawLine(LokiGlow.copy(alpha = 0.25f * k * f), prevPt, pt, 1.1f * u, StrokeCap.Round)
+                drawLine(Color(0xFFEAF3DE).copy(alpha = 0.9f * k * f), prevPt, pt, 0.28f * u, StrokeCap.Round)
+                prevPt = pt
             }
         }
     }
+
+    // Glowing hands and a shimmer on the horns.
+    val pulse = 0.6f + 0.4f * sin(t * 2.4f)
+    for (hand in listOf(lh, rh)) {
+        val r = (6f + 3f * pulse) * u
+        drawCircle(Brush.radialGradient(listOf(LokiGlow.copy(alpha = 0.7f), Color.Transparent), hand, r), r, hand)
+    }
+    val shimmer = (t * 0.5f) % 1f
+    if (shimmer < 0.25f) {
+        val hp = p(0.52f, 0.38f)
+        val r = 7f * u
+        val a = 0.5f * sin(shimmer * 4f * PI.toFloat())
+        drawCircle(Brush.radialGradient(listOf(Color(0xFFFAC775).copy(alpha = a), Color.Transparent), hp, r), r, hp)
+    }
+
+    // Embers rising.
+    for (i in 0 until 30) {
+        val ph = (t * (0.04f + (i % 5) * 0.01f) + i * 0.19f) % 1f
+        val x = w * ((i * 0.377f) % 1f) + sin(t + i) * 4f * u
+        val y = h * (1f - ph)
+        drawCircle(LokiGlow.copy(alpha = sin(ph * PI.toFloat()) * 0.7f), (0.35f + (i % 3) * 0.2f) * u, Offset(x, y))
+    }
 }
 
-// ---------------- lightning ----------------
+// ---------------- shared ----------------
 
 private fun displace(a: Offset, b: Offset, depth: Int, rough: Float, rnd: Random, out: MutableList<Offset>) {
     if (depth == 0) {
@@ -275,46 +391,30 @@ private fun displace(a: Offset, b: Offset, depth: Int, rough: Float, rnd: Random
     displace(m, b, depth - 1, rough, rnd, out)
 }
 
-private fun makeBolt(u: Float, rnd: Random, t: Float): Bolt {
-    // Strike the sigil's rim, or now and then the horns.
-    val target = if (rnd.nextFloat() < 0.25f) {
-        Offset((50f + (if (rnd.nextBoolean()) -12.5f else 12.5f)) * u, 1.5f * u)
-    } else {
-        val ang = (PI + rnd.nextFloat() * PI).toFloat() // upper half of the ring
-        Offset((50f + cos(ang) * 44f) * u, (90f + sin(ang) * 44f) * u)
-    }
-    val start = Offset((if (target.x < 50f * u) rnd.nextFloat() * 25f else 75f + rnd.nextFloat() * 25f) * u, -4f * u)
-    val main = mutableListOf(start)
-    displace(start, target, 6, 0.32f, rnd, main)
-    val forks = mutableListOf<List<Offset>>()
-    repeat(1 + rnd.nextInt(3)) {
-        val from = main[main.size / 4 + rnd.nextInt(main.size / 2)]
-        val dir = (target - start)
-        val end = from + Offset(dir.x * (0.15f + rnd.nextFloat() * 0.25f) + (rnd.nextFloat() - 0.5f) * 30f * u, dir.y * (0.2f + rnd.nextFloat() * 0.2f))
-        val f = mutableListOf(from)
-        displace(from, end, 4, 0.4f, rnd, f)
-        forks += f
-    }
-    return Bolt(main, forks, t, target)
-}
+/** Phone tilt from the gravity sensor, smoothed, in -1..1 on each axis. */
+@Composable
+private fun rememberTilt(): State<Offset> {
+    val ctx = LocalContext.current
+    val state = remember { mutableStateOf(Offset.Zero) }
+    DisposableEffect(Unit) {
+        val sm = ctx.getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        val sensor = sm.getDefaultSensor(Sensor.TYPE_GRAVITY) ?: sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        var sx = 0f
+        var sy = 0f
+        val listener = object : SensorEventListener {
+            override fun onSensorChanged(e: SensorEvent) {
+                // Phone held upright reads y ≈ 9.8; leaning changes x and z.
+                val tx = (-e.values[0] / 4f).coerceIn(-1f, 1f)
+                val ty = ((e.values[2] - 3f) / 4f).coerceIn(-1f, 1f)
+                sx += (tx - sx) * 0.12f
+                sy += (ty - sy) * 0.12f
+                state.value = Offset(sx, sy)
+            }
 
-private fun DrawScope.drawBolt(b: Bolt, t: Float, u: Float) {
-    val age = t - b.born
-    if (age > 0.9f) return
-    val fade = (1f - age / 0.9f)
-    val flicker = 0.7f + 0.3f * sin(age * 70f)
-    val a = fade * flicker
-    if (age < 0.15f) drawRect(BoltMid.copy(alpha = 0.16f * (1f - age / 0.15f)))
-    fun line(pts: List<Offset>, scale: Float) {
-        val path = Path().apply { pts.forEachIndexed { i, o -> if (i == 0) moveTo(o.x, o.y) else lineTo(o.x, o.y) } }
-        drawPath(path, BoltGlow.copy(alpha = 0.35f * a), style = Stroke(4.5f * u * scale, cap = StrokeCap.Round, join = StrokeJoin.Round))
-        drawPath(path, BoltMid.copy(alpha = 0.85f * a), style = Stroke(1.7f * u * scale, cap = StrokeCap.Round, join = StrokeJoin.Round))
-        drawPath(path, BoltCore.copy(alpha = a), style = Stroke(0.7f * u * scale, cap = StrokeCap.Round, join = StrokeJoin.Round))
-        drawPath(path, GoldLight.copy(alpha = 0.35f * a), style = Stroke(0.15f * u * scale))
+            override fun onAccuracyChanged(s: Sensor?, a: Int) {}
+        }
+        if (sensor != null) sm.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_GAME)
+        onDispose { sm.unregisterListener(listener) }
     }
-    line(b.main, 1f)
-    b.forks.forEach { line(it, 0.6f) }
-    // Impact burst.
-    drawCircle(BoltCore.copy(alpha = 0.8f * a), 1.6f * u * (1f + age * 3f), b.target)
-    drawCircle(BoltGlow.copy(alpha = 0.35f * a), 6f * u * (0.5f + age * 2f), b.target, style = Stroke(0.5f * u))
+    return state
 }

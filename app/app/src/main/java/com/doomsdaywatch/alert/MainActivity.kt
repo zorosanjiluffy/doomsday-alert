@@ -163,8 +163,10 @@ private fun HomeScreen() {
         ) {
             Column(
                 Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 14.dp)
                     .clip(RoundedCornerShape(14.dp))
-                    .background(Black.copy(alpha = 0.88f))
+                    .background(Black.copy(alpha = 0.82f))
                     .border(1.dp, Color(0xFF0F6E56), RoundedCornerShape(14.dp))
                     .padding(horizontal = 14.dp, vertical = 8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
