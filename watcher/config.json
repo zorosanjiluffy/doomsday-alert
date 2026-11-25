@@ -5,7 +5,7 @@
   "fcmTopic": "doomsday-chennai",
   "ntfyTopic": "dd-e948abf75da1",
   "ntfyServer": "https://ntfy.sh",
-  "pollSeconds": 60,
+  "pollSeconds": 30,
   "theatreKeywords": [],
   "formatKeywords": [],
   "languages": [],

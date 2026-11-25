@@ -30,7 +30,7 @@ const LOG_PATH = path.join(STATE_DIR, 'watcher.log');
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36';
-const REQUEST_GAP_MS = 1200;
+const REQUEST_GAP_MS = 400;
 const FAILURES_BEFORE_ALERT = 5;
 const NTFY_MAX_CHARS = 3800;
 const FCM_MAX_BODY = 900;
@@ -490,12 +490,14 @@ function startServer() {
         const istDay = (iso) => new Date(new Date(iso).getTime() + 330 * 60000).toISOString().slice(0, 10);
         const today = istDay(new Date().toISOString());
         const base = latestShows.baselineAt;
-        const shows = latestShows.shows.map(({ firstSeen, iso, ...x }) => ({
-          ...x,
-          isNew: !!base && firstSeen > base && istDay(firstSeen) === today,
-        }));
+        const istTime = (iso) => new Date(iso).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' });
+        const shows = latestShows.shows.map(({ firstSeen, iso, ...x }) => {
+          const isNew = !!base && firstSeen > base && istDay(firstSeen) === today;
+          return { ...x, isNew, ...(isNew ? { addedAt: istTime(firstSeen) } : {}) };
+        });
         res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' });
-        return res.end(JSON.stringify({ updated: latestShows.updated, today, newToday: shows.filter((x) => x.isNew).length, shows }));
+        const since = base ? new Date(base).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' }) : null;
+        return res.end(JSON.stringify({ updated: latestShows.updated, today, watchingSince: since, pollSeconds: config.pollSeconds, newToday: shows.filter((x) => x.isNew).length, shows }));
       }
       if (url.pathname === '/subscribe-web') {
         // The iPhone/web app posts its FCM token here; we add it to the alerts topic.
@@ -596,10 +598,14 @@ async function main() {
   log(`Watching ${baseUrl} every ${config.pollSeconds}s | FCM topic "${config.fcmTopic}" | ntfy "${config.ntfyTopic || '-'}"`);
   getFcm();
   startServer();
+  let lastStart = Date.now();
   await runOnce();
   if (args.includes('--once')) return;
   for (;;) {
-    await sleep(config.pollSeconds * 1000 + Math.floor(Math.random() * 10000));
+    // Start each check pollSeconds after the previous one started (plus a little jitter).
+    const wait = config.pollSeconds * 1000 - (Date.now() - lastStart) + Math.floor(Math.random() * 2000);
+    await sleep(Math.max(1000, wait));
+    lastStart = Date.now();
     await runOnce();
   }
 }
