@@ -47,7 +47,7 @@ android {
         buildConfigField("String", "FB_APP_ID", "\"${fb.appId}\"")
         buildConfigField("String", "FB_PROJECT_ID", "\"${fb.projectId}\"")
         buildConfigField("String", "FB_SENDER_ID", "\"${fb.senderId}\"")
-        buildConfigField("String", "FCM_TOPIC", "\"doomsday-chennai\"")
+        buildConfigField("String", "FCM_TOPIC", "\"${(project.findProperty("fcmTopic") as String?) ?: "doomsday-chennai"}\"")
         buildConfigField("String", "STATUS_URL", "\"$statusUrl\"")
         buildConfigField("String", "DISTRICT_URL", "\"https://www.district.in/movies/avengers-doomsday-movie-tickets-in-chennai-MV176735\"")
     }

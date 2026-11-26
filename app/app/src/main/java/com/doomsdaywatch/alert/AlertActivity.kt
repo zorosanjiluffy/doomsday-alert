@@ -109,6 +109,7 @@ class AlertActivity : ComponentActivity() {
     private fun acknowledge() {
         if (acknowledged) return
         acknowledged = true
+        AlertStore.ackCurrentSeries(this)
         buzzer.stop()
         Alarm.stop(this)
     }

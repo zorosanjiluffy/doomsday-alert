@@ -89,6 +89,13 @@ class MainActivity : ComponentActivity() {
         (application as DoomApp).subscribe()
         setContent { DoomRoot() }
     }
+
+    override fun onResume() {
+        super.onResume()
+        // Opening the app counts as "I've seen it": stop the first-day reminders and any ringing.
+        AlertStore.ackCurrentSeries(this)
+        Alarm.stop(this)
+    }
 }
 
 /** Shows the mandatory setup until every permission is granted, then the home screen. */

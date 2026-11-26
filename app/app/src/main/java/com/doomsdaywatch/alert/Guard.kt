@@ -112,7 +112,7 @@ object Guard {
             }
             val url = a.optString("url").takeIf { it.startsWith("https://") } ?: BuildConfig.DISTRICT_URL
             Log.i(DoomApp.TAG, "Backup check found alert $id")
-            DoomMessagingService.deliver(ctx, id, a.optString("kind", "info"), a.optString("title"), a.optString("body"), url)
+            DoomMessagingService.deliver(ctx, id, a.optString("kind", "info"), a.optString("title"), a.optString("body"), url, a.optString("series"))
         } catch (e: Exception) {
             Log.w(DoomApp.TAG, "Backup check failed: ${e.message}")
         }

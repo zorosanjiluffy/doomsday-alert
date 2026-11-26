@@ -44,6 +44,15 @@ object AlertStore {
     /** Marks an id as seen without ringing (used for the alert that was already current at install). */
     fun markSeen(ctx: Context, id: String) { claim(ctx, id) }
 
+    /** First-day reminders share a series id; once the person has seen the alert, the rest stay quiet. */
+    fun setCurrentSeries(ctx: Context, series: String) = prefs(ctx).edit().putString("curSeries", series).apply()
+    fun ackCurrentSeries(ctx: Context) {
+        val s = prefs(ctx).getString("curSeries", "")!!
+        if (s.isNotEmpty()) prefs(ctx).edit().putString("ackSeries", s).apply()
+    }
+    fun isSeriesAcked(ctx: Context, series: String?) =
+        !series.isNullOrEmpty() && prefs(ctx).getString("ackSeries", "") == series
+
     fun hasBaseline(ctx: Context) = prefs(ctx).getBoolean("pollBaseline", false)
     fun setBaseline(ctx: Context) = prefs(ctx).edit().putBoolean("pollBaseline", true).apply()
 

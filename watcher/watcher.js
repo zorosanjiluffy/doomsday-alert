@@ -214,7 +214,7 @@ function getFcm() {
   return fcm;
 }
 
-async function sendFcm({ id, kind, title, message, click }) {
+async function sendFcm({ id, series, kind, title, message, click }) {
   if (DRY_RUN) return log(`[dry] FCM ${kind}: ${title}`);
   const m = getFcm();
   if (!m) return;
@@ -227,6 +227,7 @@ async function sendFcm({ id, kind, title, message, click }) {
         body: message.length > FCM_MAX_BODY ? message.slice(0, FCM_MAX_BODY) + '\n…and more' : message,
         url: click || baseUrl,
         id,
+        series: series || '',
         sentAt: new Date().toISOString(),
       },
       android: { priority: 'high', ttl: kind === 'alarm' ? 3 * 3600 * 1000 : 6 * 3600 * 1000 },
@@ -321,7 +322,7 @@ async function notify(n) {
   log(`Alert (${n.kind}): ${n.title}`);
   await Promise.all([n.kind === 'status' ? null : sendFcm(n), sendNtfy(n)]);
   if (n.kind !== 'status') {
-    status.lastAlert = { id: n.id, kind: n.kind, title: n.title, body: n.message, url: n.click, at: new Date().toISOString() };
+    status.lastAlert = { id: n.id, series: n.series || '', kind: n.kind, title: n.title, body: n.message, url: n.click, at: new Date().toISOString() };
   }
 }
 
@@ -380,7 +381,7 @@ function stopRepeats(reason) {
 }
 
 // Ring again every everySeconds; WhatsApp on the first whatsappRounds rounds.
-function startRepeats({ title, message, click, repeats, everySeconds, whatsappRounds }) {
+function startRepeats({ series, title, message, click, repeats, everySeconds, whatsappRounds }) {
   stopRepeats('restarted with newer shows');
   const r = { title, message, click, left: repeats, round: 1, repeats, whatsappRounds };
   repeatInfo = r;
@@ -391,7 +392,7 @@ function startRepeats({ title, message, click, repeats, everySeconds, whatsappRo
     r.left--;
     status.firstDayRepeat = { ...status.firstDayRepeat, left: r.left };
     const t = `${r.title} (reminder ${r.round}/${r.repeats + 1})`;
-    await notify({ kind: 'alarm', title: t, message: r.message, click: r.click, tags: ['rotating_light', 'fire'] });
+    await notify({ kind: 'alarm', series, title: t, message: r.message, click: r.click, tags: ['rotating_light', 'fire'] });
     if (r.round <= r.whatsappRounds) await sendWhatsApp(`${t}\n\n${r.message}\n\nBook: ${r.click}`);
     if (repeatInfo !== r) return;
     if (r.left > 0) repeatTimer = setTimeout(tick, everySeconds * 1000);
@@ -408,9 +409,12 @@ async function firstDayAlert(shows, { test = false } = {}) {
   const title = `${test ? 'TEST: ' : ''}🔥 FIRST DAY ${prettyDate(s0.date)} ${s0.time} show open! ${shortCinema(s0.cinema)}${cinemas.size > 1 ? ` +${cinemas.size - 1} more` : ''}`;
   const message = `${test ? 'This is a drill.\n' : ''}${describeShows(early)}\nBook NOW before it sells out!`;
   const click = pageUrl(s0.formatId, s0.date);
-  await notify({ kind: 'alarm', title, message, click, tags: ['rotating_light', 'fire'] });
+  // Every reminder carries the same series id: a phone that has opened the app stops ringing for it.
+  const series = `fd-${Date.now()}`;
+  await notify({ kind: 'alarm', series, title, message, click, tags: ['rotating_light', 'fire'] });
   await sendWhatsApp(`${title}\n\n${message}\n\nBook: ${click}`);
   startRepeats({
+    series,
     title,
     message,
     click,
