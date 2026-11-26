@@ -17,6 +17,15 @@
 // If PORT is set (Railway sets it), it also serves:
 //   GET  /status                 JSON the app shows on its home screen
 //   POST /test?key=ADMIN_KEY     sends a test alarm to every phone
+//        &firstday=1             ...as a first-day drill (3 repeats + WhatsApp)
+//   POST /test-whatsapp?key=ADMIN_KEY   sends one test WhatsApp message
+//   POST /stop?key=ADMIN_KEY     stops a running first-day repeat
+//
+// First-day watch (config.firstDay): a new show on release day before beforeHour
+// (the 12:01 AM / 6 AM shows), or any show before release day, rings the alarm
+// again every repeatEverySeconds, repeats times, and sends WhatsApp messages.
+//   env WHATSAPP_TO = "+91XXXXXXXXXX:apikey[,+91...:apikey]"  (CallMeBot keys)
+//   env DRY_RUN=1   log alerts instead of sending them (local testing)
 
 const fs = require('fs');
 const path = require('path');
@@ -38,6 +47,8 @@ const FCM_MAX_BODY = 900;
 const config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
 config.ntfyTopic = process.env.NTFY_TOPIC ?? config.ntfyTopic;
 config.fcmTopic = process.env.FCM_TOPIC || config.fcmTopic;
+const DRY_RUN = !!process.env.DRY_RUN;
+config.firstDay = { date: '2026-12-17', beforeHour: 8, repeatEverySeconds: 60, repeats: 15, whatsappRepeats: 5, ...(config.firstDay || {}) };
 const cityLabel = config.city.charAt(0).toUpperCase() + config.city.slice(1);
 const baseUrl = `https://www.district.in/movies/${config.movieSlug}-movie-tickets-in-${config.city}-${config.movieId}`;
 
@@ -204,6 +215,7 @@ function getFcm() {
 }
 
 async function sendFcm({ id, kind, title, message, click }) {
+  if (DRY_RUN) return log(`[dry] FCM ${kind}: ${title}`);
   const m = getFcm();
   if (!m) return;
   try {
@@ -242,6 +254,7 @@ async function sendFcm({ id, kind, title, message, click }) {
 
 async function sendNtfy({ kind, title, message, click, tags = [] }) {
   if (!config.ntfyTopic) return;
+  if (DRY_RUN) return log(`[dry] ntfy ${kind}: ${title}`);
   const body = {
     topic: config.ntfyTopic,
     title,
@@ -261,6 +274,42 @@ async function sendNtfy({ kind, title, message, click, tags = [] }) {
     log(`ntfy ${kind}: ${title}`);
   } catch (e) {
     log(`!! ntfy failed: ${e.message}`);
+  }
+}
+
+// WhatsApp through CallMeBot (free, personal use). Each recipient activates it once
+// from their own WhatsApp and gets an apikey.
+function whatsappRecipients() {
+  return (process.env.WHATSAPP_TO || '')
+    .split(',')
+    .map((x) => x.trim())
+    .filter(Boolean)
+    .map((x) => {
+      const i = x.lastIndexOf(':');
+      return { phone: x.slice(0, i).replace(/[^+\d]/g, ''), apikey: x.slice(i + 1).trim() };
+    })
+    .filter((r) => r.phone && r.apikey);
+}
+
+async function sendWhatsApp(text) {
+  const list = whatsappRecipients();
+  if (!list.length) return log('WhatsApp: no WHATSAPP_TO set, skipped');
+  for (const r of list) {
+    const tail = r.phone.slice(-4);
+    if (DRY_RUN) {
+      log(`[dry] WhatsApp to ...${tail}: ${text.split('\n')[0]}`);
+      continue;
+    }
+    try {
+      const q = new URLSearchParams({ phone: r.phone, text: text.slice(0, 1500), apikey: r.apikey });
+      const res = await fetch(`https://api.callmebot.com/whatsapp.php?${q}`, { signal: AbortSignal.timeout(20000) });
+      const body = (await res.text()).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+      if (!res.ok || /apikey is invalid|error/i.test(body)) throw new Error(`HTTP ${res.status}: ${body.slice(0, 160)}`);
+      log(`WhatsApp sent to ...${tail}`);
+    } catch (e) {
+      log(`!! WhatsApp to ...${tail} failed: ${e.message}`);
+    }
+    await sleep(1500);
   }
 }
 
@@ -297,6 +346,78 @@ function describeShows(shows) {
     }
   }
   return lines.join('\n');
+}
+
+// ---------- first-day watch (12:01 AM / 6 AM shows) ----------
+
+function showHour(s) {
+  const m = /(\d{1,2}):(\d{2})\s*([AP]M)/i.exec(s.time || '');
+  if (!m) return null;
+  let h = Number(m[1]) % 12;
+  if (/p/i.test(m[3])) h += 12;
+  return h;
+}
+
+// A show we must never miss: release day before beforeHour, or anything before release day.
+function isFirstDayShow(s) {
+  const fd = config.firstDay;
+  if (!fd?.date || !s.date) return false;
+  if (s.date < fd.date) return true;
+  if (s.date !== fd.date) return false;
+  const h = showHour(s);
+  return h !== null && h < fd.beforeHour;
+}
+
+let repeatTimer = null;
+let repeatInfo = null;
+
+function stopRepeats(reason) {
+  if (repeatTimer) clearTimeout(repeatTimer);
+  repeatTimer = null;
+  if (repeatInfo) log(`First-day repeat stopped (${reason})`);
+  repeatInfo = null;
+  status.firstDayRepeat = null;
+}
+
+// Ring again every everySeconds; WhatsApp on the first whatsappRounds rounds.
+function startRepeats({ title, message, click, repeats, everySeconds, whatsappRounds }) {
+  stopRepeats('restarted with newer shows');
+  const r = { title, message, click, left: repeats, round: 1, repeats, whatsappRounds };
+  repeatInfo = r;
+  status.firstDayRepeat = { title, left: repeats, startedAt: new Date().toISOString() };
+  const tick = async () => {
+    if (repeatInfo !== r) return;
+    r.round++;
+    r.left--;
+    status.firstDayRepeat = { ...status.firstDayRepeat, left: r.left };
+    const t = `${r.title} (reminder ${r.round}/${r.repeats + 1})`;
+    await notify({ kind: 'alarm', title: t, message: r.message, click: r.click, tags: ['rotating_light', 'fire'] });
+    if (r.round <= r.whatsappRounds) await sendWhatsApp(`${t}\n\n${r.message}\n\nBook: ${r.click}`);
+    if (repeatInfo !== r) return;
+    if (r.left > 0) repeatTimer = setTimeout(tick, everySeconds * 1000);
+    else stopRepeats('all reminders sent');
+  };
+  repeatTimer = setTimeout(tick, everySeconds * 1000);
+}
+
+async function firstDayAlert(shows, { test = false } = {}) {
+  const fd = config.firstDay;
+  const early = [...shows].sort((a, b) => (showHour(a) ?? 99) - (showHour(b) ?? 99) || (a.time || '').localeCompare(b.time || ''));
+  const s0 = early[0];
+  const cinemas = new Set(early.map((s) => s.cinema));
+  const title = `${test ? 'TEST: ' : ''}🔥 FIRST DAY ${prettyDate(s0.date)} ${s0.time} show open! ${shortCinema(s0.cinema)}${cinemas.size > 1 ? ` +${cinemas.size - 1} more` : ''}`;
+  const message = `${test ? 'This is a drill.\n' : ''}${describeShows(early)}\nBook NOW before it sells out!`;
+  const click = pageUrl(s0.formatId, s0.date);
+  await notify({ kind: 'alarm', title, message, click, tags: ['rotating_light', 'fire'] });
+  await sendWhatsApp(`${title}\n\n${message}\n\nBook: ${click}`);
+  startRepeats({
+    title,
+    message,
+    click,
+    repeats: test ? 3 : fd.repeats,
+    everySeconds: test ? 30 : fd.repeatEverySeconds,
+    whatsappRounds: test ? 2 : fd.whatsappRepeats,
+  });
 }
 
 // ---------- status (for the app's home screen) ----------
@@ -363,6 +484,11 @@ async function check() {
       click: baseUrl,
       tags: ['eyes'],
     });
+  } else if (newShows.some(isFirstDayShow)) {
+    // The 12:01 AM / 6 AM first-day shows: alarm, WhatsApp, and keep repeating.
+    await firstDayAlert(newShows.filter(isFirstDayShow));
+    const rest = newShows.filter((s) => !isFirstDayShow(s));
+    if (rest.length) log(`(also ${rest.length} other new shows, listed as NEW in the app)`);
   } else if (newShows.length || newDates.length || newFormats.length) {
     // ALARM for anything new at all: every new show, screen, theatre, date or language.
     const uniq = (arr, key) => [...new Map(arr.map((s) => [key(s), s])).values()];
@@ -574,10 +700,27 @@ function startServer() {
           return res.end(JSON.stringify({ ok: false, error: e.message }));
         }
       }
-      if (url.pathname === '/test' && req.method === 'POST') {
+      if (['/test', '/test-whatsapp', '/stop'].includes(url.pathname) && req.method === 'POST') {
         if (!process.env.ADMIN_KEY || url.searchParams.get('key') !== process.env.ADMIN_KEY) {
           res.writeHead(403);
           return res.end('forbidden');
+        }
+        if (url.pathname === '/stop') {
+          const was = !!repeatInfo;
+          stopRepeats('stopped by admin');
+          res.writeHead(200);
+          return res.end(was ? 'repeats stopped' : 'nothing was repeating');
+        }
+        if (url.pathname === '/test-whatsapp') {
+          const n = whatsappRecipients().length;
+          await sendWhatsApp('🚨 TEST from the Doomsday watcher: WhatsApp alerts are working.');
+          res.writeHead(200);
+          return res.end(`test WhatsApp sent to ${n} number(s); see logs`);
+        }
+        if (url.searchParams.get('firstday')) {
+          await firstDayAlert([{ cinema: 'Kamala Cinemas', time: '12:01 AM', date: config.firstDay.date, lang: 'Tamil' }], { test: true });
+          res.writeHead(200);
+          return res.end('first-day drill started: alarm now + 3 repeats every 30s');
         }
         await sendTestAlarm();
         res.writeHead(200);
@@ -595,6 +738,7 @@ async function main() {
     await sendTestAlarm();
     return;
   }
+  log(`First-day watch: new shows on ${config.firstDay.date} before ${config.firstDay.beforeHour}:00 (or earlier dates) repeat ${config.firstDay.repeats}x every ${config.firstDay.repeatEverySeconds}s | WhatsApp numbers: ${whatsappRecipients().length}${DRY_RUN ? ' | DRY RUN' : ''}`);
   log(`Watching ${baseUrl} every ${config.pollSeconds}s | FCM topic "${config.fcmTopic}" | ntfy "${config.ntfyTopic || '-'}"`);
   getFcm();
   startServer();
