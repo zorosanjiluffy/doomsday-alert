@@ -18,13 +18,15 @@
 //   GET  /status                 JSON the app shows on its home screen
 //   POST /test?key=ADMIN_KEY     sends a test alarm to every phone
 //        &firstday=1             ...as a first-day drill (3 repeats + WhatsApp)
-//   POST /test-whatsapp?key=ADMIN_KEY   sends one test WhatsApp message
+//   POST /test-whatsapp?key=ADMIN_KEY   sends one test WhatsApp + Telegram message
 //   POST /stop?key=ADMIN_KEY     stops a running first-day repeat
 //
 // First-day watch (config.firstDay): a new show on release day before beforeHour
 // (the 12:01 AM / 6 AM shows), or any show before release day, rings the alarm
 // again every repeatEverySeconds, repeats times, and sends WhatsApp messages.
 //   env WHATSAPP_TO = "+91XXXXXXXXXX:apikey[,+91...:apikey]"  (CallMeBot keys)
+//   env TELEGRAM_BOT_TOKEN = token from @BotFather. Anyone who sends /start to the bot
+//       gets the first-day messages (/stop to leave); chats are kept in telegram.json.
 //   env DRY_RUN=1   log alerts instead of sending them (local testing)
 
 const fs = require('fs');
@@ -314,6 +316,83 @@ async function sendWhatsApp(text) {
   }
 }
 
+// Telegram: an official bot. People join by sending /start to it.
+const TG_PATH = path.join(STATE_DIR, 'telegram.json');
+const tgToken = () => (process.env.TELEGRAM_BOT_TOKEN || '').trim();
+function tgLoad() {
+  try {
+    return JSON.parse(fs.readFileSync(TG_PATH, 'utf8'));
+  } catch {
+    return { offset: 0, chats: {} };
+  }
+}
+function tgSave(t) {
+  fs.mkdirSync(STATE_DIR, { recursive: true });
+  fs.writeFileSync(TG_PATH, JSON.stringify(t, null, 2));
+}
+async function tgApi(method, body) {
+  const res = await fetch(`https://api.telegram.org/bot${tgToken()}/${method}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(20000),
+  });
+  const j = await res.json().catch(() => ({}));
+  if (!j.ok) throw new Error(`${method}: ${j.description || 'HTTP ' + res.status}`);
+  return j.result;
+}
+
+// Picks up /start and /stop sent to the bot since last time.
+let tgPolling = false;
+async function telegramPoll() {
+  if (!tgToken() || DRY_RUN || tgPolling) return;
+  tgPolling = true;
+  try {
+    const t = tgLoad();
+    const updates = await tgApi('getUpdates', { offset: t.offset, timeout: 0, allowed_updates: ['message'] });
+    for (const u of updates) {
+      t.offset = u.update_id + 1;
+      const m = u.message;
+      if (!m?.chat || typeof m.text !== 'string') continue;
+      const id = String(m.chat.id);
+      const name = m.chat.first_name || m.chat.title || m.chat.username || id;
+      if (/^\/start\b/i.test(m.text)) {
+        t.chats[id] = { name, at: new Date().toISOString() };
+        log(`Telegram: ${name} joined (${Object.keys(t.chats).length} chats)`);
+        await tgApi('sendMessage', { chat_id: id, text: `✅ Hi ${name}! You'll get a message here the moment a first-day (12:01 AM / 6 AM) Avengers: Doomsday show opens in ${cityLabel}.\nSend /stop to stop.` }).catch(() => {});
+      } else if (/^\/stop\b/i.test(m.text)) {
+        delete t.chats[id];
+        log(`Telegram: ${name} left`);
+        await tgApi('sendMessage', { chat_id: id, text: 'Stopped. Send /start to join again.' }).catch(() => {});
+      }
+    }
+    tgSave(t);
+    status.telegramChats = Object.keys(t.chats).length;
+  } catch (e) {
+    log(`!! Telegram poll failed: ${e.message}`);
+  } finally {
+    tgPolling = false;
+  }
+}
+
+async function sendTelegram(text) {
+  if (!tgToken()) return log('Telegram: no TELEGRAM_BOT_TOKEN set, skipped');
+  const chats = Object.entries(tgLoad().chats);
+  if (DRY_RUN) return log(`[dry] Telegram to ${chats.length} chats: ${text.split('\n')[0]}`);
+  if (!chats.length) return log('Telegram: nobody has sent /start to the bot yet');
+  for (const [id, c] of chats) {
+    try {
+      await tgApi('sendMessage', { chat_id: id, text: text.slice(0, 4000), disable_web_page_preview: true });
+      log(`Telegram sent to ${c.name}`);
+    } catch (e) {
+      log(`!! Telegram to ${c.name} failed: ${e.message}`);
+    }
+  }
+}
+
+// WhatsApp and Telegram together.
+const sendMessages = (text) => Promise.all([sendWhatsApp(text), sendTelegram(text)]);
+
 // kind: "alarm" (vibrate until opened), "info" (normal), "status" (watcher health; ntfy only)
 async function notify(n) {
   // One id per alert, shared by the push and /status, so the app can drop duplicates
@@ -393,7 +472,7 @@ function startRepeats({ series, title, message, click, repeats, everySeconds, wh
     status.firstDayRepeat = { ...status.firstDayRepeat, left: r.left };
     const t = `${r.title} (reminder ${r.round}/${r.repeats + 1})`;
     await notify({ kind: 'alarm', series, title: t, message: r.message, click: r.click, tags: ['rotating_light', 'fire'] });
-    if (r.round <= r.whatsappRounds) await sendWhatsApp(`${t}\n\n${r.message}\n\nBook: ${r.click}`);
+    if (r.round <= r.whatsappRounds) await sendMessages(`${t}\n\n${r.message}\n\nBook: ${r.click}`);
     if (repeatInfo !== r) return;
     if (r.left > 0) repeatTimer = setTimeout(tick, everySeconds * 1000);
     else stopRepeats('all reminders sent');
@@ -412,7 +491,7 @@ async function firstDayAlert(shows, { test = false } = {}) {
   // Every reminder carries the same series id: a phone that has opened the app stops ringing for it.
   const series = `fd-${Date.now()}`;
   await notify({ kind: 'alarm', series, title, message, click, tags: ['rotating_light', 'fire'] });
-  await sendWhatsApp(`${title}\n\n${message}\n\nBook: ${click}`);
+  await sendMessages(`${title}\n\n${message}\n\nBook: ${click}`);
   startRepeats({
     series,
     title,
@@ -572,6 +651,7 @@ async function check() {
 }
 
 async function runOnce() {
+  telegramPoll();
   try {
     await check();
     if (failureAlertSent) {
@@ -716,10 +796,12 @@ function startServer() {
           return res.end(was ? 'repeats stopped' : 'nothing was repeating');
         }
         if (url.pathname === '/test-whatsapp') {
+          await telegramPoll();
           const n = whatsappRecipients().length;
-          await sendWhatsApp('🚨 TEST from the Doomsday watcher: WhatsApp alerts are working.');
+          const tg = Object.keys(tgLoad().chats).length;
+          await sendMessages('🚨 TEST from the Doomsday watcher: message alerts are working.');
           res.writeHead(200);
-          return res.end(`test WhatsApp sent to ${n} number(s); see logs`);
+          return res.end(`test message sent: WhatsApp ${n} number(s), Telegram ${tg} chat(s); see logs`);
         }
         if (url.searchParams.get('firstday')) {
           await firstDayAlert([{ cinema: 'Kamala Cinemas', time: '12:01 AM', date: config.firstDay.date, lang: 'Tamil' }], { test: true });
@@ -742,7 +824,7 @@ async function main() {
     await sendTestAlarm();
     return;
   }
-  log(`First-day watch: new shows on ${config.firstDay.date} before ${config.firstDay.beforeHour}:00 (or earlier dates) repeat ${config.firstDay.repeats}x every ${config.firstDay.repeatEverySeconds}s | WhatsApp numbers: ${whatsappRecipients().length}${DRY_RUN ? ' | DRY RUN' : ''}`);
+  log(`First-day watch: new shows on ${config.firstDay.date} before ${config.firstDay.beforeHour}:00 (or earlier dates) repeat ${config.firstDay.repeats}x every ${config.firstDay.repeatEverySeconds}s | WhatsApp numbers: ${whatsappRecipients().length} | Telegram: ${tgToken() ? Object.keys(tgLoad().chats).length + ' chats' : 'off'}${DRY_RUN ? ' | DRY RUN' : ''}`);
   log(`Watching ${baseUrl} every ${config.pollSeconds}s | FCM topic "${config.fcmTopic}" | ntfy "${config.ntfyTopic || '-'}"`);
   getFcm();
   startServer();
